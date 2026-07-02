@@ -1,0 +1,170 @@
+"""
+Claude engine: send the scan payload to Claude and parse the trade-card output.
+
+Uses the official Anthropic SDK (AsyncAnthropic) with model claude-sonnet-4-6.
+On failure it retries once after a delay before logging the failure. The model
+response is parsed defensively into a validated list of trade cards, sorted by
+confidence tier then by number of confluence signals.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+from typing import Any, Optional
+
+from anthropic import AsyncAnthropic
+
+import config
+from analysis import prompt_builder
+
+logger = logging.getLogger("flowscanner.claude")
+
+_CONFIDENCE_RANK = {"high": 0, "medium": 1}
+
+
+def _extract_json(text: str) -> Optional[dict]:
+    """Pull the first top-level JSON object out of the model text."""
+    text = text.strip()
+    # Strip accidental markdown fences.
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Fallback: locate the outermost {...} span.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            logger.error("Failed to parse JSON from Claude response span")
+    return None
+
+
+def _coerce_number(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.replace("$", "").replace("%", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _validate_cards(parsed: dict) -> tuple[str, list[dict]]:
+    """Filter, normalize and sort trade cards from the parsed model output."""
+    summary = str(parsed.get("market_summary", "")).strip()
+    raw_cards = parsed.get("trade_cards", [])
+    if not isinstance(raw_cards, list):
+        return summary, []
+
+    cards: list[dict] = []
+    for c in raw_cards:
+        if not isinstance(c, dict):
+            continue
+        confidence = str(c.get("confidence", "")).strip().lower()
+        if confidence not in _CONFIDENCE_RANK:
+            continue  # drop Low / unknown tiers
+        signals = c.get("confluence_signals") or []
+        if not isinstance(signals, list):
+            signals = [str(signals)]
+        count = c.get("confluence_count")
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = len(signals)
+        if count < config.MIN_CONFLUENCE_COUNT:
+            continue
+
+        contract = c.get("contract") or {}
+        cards.append(
+            {
+                "ticker": str(c.get("ticker", "")).upper(),
+                "bias": "calls",
+                "confidence": "High" if confidence == "high" else "Medium",
+                "confluence_count": count,
+                "confluence_signals": [str(s) for s in signals],
+                "thesis": str(c.get("thesis", "")).strip(),
+                "contract": {
+                    "expiration": str(contract.get("expiration", "")).strip(),
+                    "strike": _coerce_number(contract.get("strike")),
+                    "delta_target": str(contract.get("delta_target", "")).strip(),
+                },
+                "entry_reference": _coerce_number(c.get("entry_reference")),
+                "stop_level": _coerce_number(c.get("stop_level")),
+                "price_target": _coerce_number(c.get("price_target")),
+                "rr_ratio": _coerce_number(c.get("rr_ratio")),
+                "iv_assessment": str(c.get("iv_assessment", "")).strip(),
+            }
+        )
+
+    cards.sort(
+        key=lambda x: (_CONFIDENCE_RANK[x["confidence"].lower()], -x["confluence_count"])
+    )
+    return summary, cards
+
+
+class ClaudeEngine:
+    def __init__(self):
+        self._client = AsyncAnthropic(
+            api_key=config.ANTHROPIC_API_KEY,
+            timeout=config.CLAUDE_TIMEOUT_SECONDS,
+        )
+
+    async def _call(self, system_prompt: str, user_content: str) -> Optional[str]:
+        kwargs: dict[str, Any] = dict(
+            model=config.CLAUDE_MODEL,
+            max_tokens=config.CLAUDE_MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        # Fable 5 uses adaptive extended thinking; bound it via output_config.effort
+        # so reasoning doesn't consume the whole token budget and starve the JSON
+        # output. Omitted when CLAUDE_EFFORT is blank (e.g. models without the knob).
+        if getattr(config, "CLAUDE_EFFORT", ""):
+            kwargs["output_config"] = {"effort": config.CLAUDE_EFFORT}
+        message = await self._client.messages.create(**kwargs)
+        # Concatenate all text blocks.
+        parts = [b.text for b in message.content if getattr(b, "type", None) == "text"]
+        return "".join(parts) if parts else None
+
+    async def analyze(self, payload: dict) -> dict:
+        """
+        Run the confluence analysis. Returns:
+          {"market_summary": str, "trade_cards": [...], "error": Optional[str]}
+        Retries once after config.CLAUDE_RETRY_DELAY_SECONDS on failure.
+        """
+        system_prompt, user_content = prompt_builder.build_messages(payload)
+
+        for attempt in (1, 2):
+            try:
+                text = await self._call(system_prompt, user_content)
+                if not text:
+                    raise ValueError("Empty response from Claude")
+                parsed = _extract_json(text)
+                if parsed is None:
+                    raise ValueError("Could not parse JSON from Claude response")
+                summary, cards = _validate_cards(parsed)
+                logger.info("Claude produced %s qualifying trade card(s)", len(cards))
+                return {"market_summary": summary, "trade_cards": cards, "error": None}
+            except Exception as exc:
+                logger.warning("Claude analysis attempt %s failed: %s", attempt, exc)
+                if attempt == 1:
+                    await asyncio.sleep(config.CLAUDE_RETRY_DELAY_SECONDS)
+                else:
+                    logger.error("Claude analysis failed after retry: %s", exc)
+                    return {
+                        "market_summary": "",
+                        "trade_cards": [],
+                        "error": str(exc),
+                    }
+        # Unreachable, but keeps type-checkers content.
+        return {"market_summary": "", "trade_cards": [], "error": "unknown"}
