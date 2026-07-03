@@ -1,1 +1,152 @@
-<html><body><h1>FlowScanner initializing...</h1></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="300" />
+  <title>FlowScanner &mdash; Postmarket session</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2029;
+      --panel-2: #212936;
+      --border: #2c3644;
+      --text: #e6edf3;
+      --muted: #8b98a9;
+      --green: #3fb950;
+      --red: #f85149;
+      --amber: #d29922;
+      --blue: #58a6ff;
+      --high: #3fb950;
+      --medium: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 18px 60px; }
+    header.top {
+      display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+      gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 20px;
+    }
+    header.top h1 { margin: 0; font-size: 22px; letter-spacing: 0.5px; }
+    header.top h1 span { color: var(--blue); }
+    .session-time { color: var(--muted); font-size: 13px; }
+    .macro-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px;
+    }
+    .macro-chip {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; font-size: 13px; min-width: 150px;
+    }
+    .macro-chip .k { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; }
+    .macro-chip .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+    .bullish { color: var(--green); }
+    .bearish { color: var(--red); }
+    .neutral { color: var(--amber); }
+    .summary {
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--blue);
+      border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; font-size: 14px; color: var(--text);
+    }
+    .error {
+      background: #2a1518; border: 1px solid var(--red); border-radius: 8px;
+      padding: 12px 16px; margin-bottom: 24px; color: #ffb3ab; font-size: 14px;
+    }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 18px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .card-head { display: flex; align-items: center; justify-content: space-between; }
+    .ticker { font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
+    .ticker small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 6px; }
+    .badges { display: flex; gap: 6px; align-items: center; }
+    .badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      padding: 4px 9px; border-radius: 20px;
+    }
+    .badge.High { background: rgba(63,185,80,0.15); color: var(--high); border: 1px solid var(--high); }
+    .badge.Medium { background: rgba(210,153,34,0.15); color: var(--medium); border: 1px solid var(--medium); }
+    .badge.count { background: var(--panel-2); color: var(--blue); border: 1px solid var(--border); }
+    .thesis { font-size: 13.5px; color: var(--text); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+    .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .metric .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .metric .v { font-size: 15px; font-weight: 600; margin-top: 1px; }
+    .metric .v.target { color: var(--green); }
+    .metric .v.stop { color: var(--red); }
+    .contract {
+      background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px;
+      padding: 10px 12px; font-size: 13px;
+    }
+    .contract .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .signals { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+    .signals li {
+      font-size: 12.5px; color: var(--text); padding-left: 18px; position: relative;
+    }
+    .signals li::before { content: "\2713"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+    .iv { font-size: 12px; color: var(--muted); font-style: italic; }
+    .empty {
+      text-align: center; padding: 60px 20px; color: var(--muted);
+      background: var(--panel); border: 1px dashed var(--border); border-radius: 12px;
+    }
+    footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: center; }
+    .rr { color: var(--blue); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1><span>Flow</span>Scanner</h1>
+        <div class="session-time">Postmarket session &middot; generated 2026-07-02 22:43:53 Eastern Daylight Time</div>
+      </div>
+      <div class="session-time">Auto-refresh every 5 min</div>
+    </header>
+
+    <div class="macro-bar">
+      <div class="macro-chip">
+        <div class="k">SPY</div>
+        <div class="v bullish">Bullish @ 744.78</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">QQQ</div>
+        <div class="v bullish">Bullish @ 712.60</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">VIX</div>
+        <div class="v bullish">16.15 (normal)</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Tickers Scanned</div>
+        <div class="v">59</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Qualifying Setups</div>
+        <div class="v">0</div>
+      </div>
+    </div>
+
+    
+    <div class="error"><strong>Analysis error:</strong> Error code: 400 - {&#39;type&#39;: &#39;error&#39;, &#39;error&#39;: {&#39;type&#39;: &#39;invalid_request_error&#39;, &#39;message&#39;: &#39;Your credit balance is too low to access the Anthropic API. Please go to Plans &amp; Billing to upgrade or purchase credits.&#39;}, &#39;request_id&#39;: &#39;req_011CceMaXTRmnRQu6xJKUrTM&#39;}</div>
+    
+
+    
+
+    
+    <div class="empty">
+      No qualifying swing-call setups this session.<br />
+      A quiet tape is a valid result &mdash; the scanner only surfaces High/Medium confidence confluences.
+    </div>
+    
+
+    <footer>
+      FlowScanner &middot; for research and educational use only &middot; not investment advice.
+    </footer>
+  </div>
+</body>
+</html>
