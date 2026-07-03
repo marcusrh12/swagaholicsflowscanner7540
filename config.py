@@ -38,6 +38,17 @@ UW_API_KEY = os.getenv("UW_API_KEY", "").strip()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
 # --------------------------------------------------------------------------- #
+# GitHub Pages publishing
+# --------------------------------------------------------------------------- #
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+GITHUB_USER = os.getenv("GITHUB_USER", "marcusrh12").strip()
+GITHUB_REPO = os.getenv("GITHUB_REPO", "swagaholicsflowscanner7540").strip()
+GITHUB_PAGES_URL = os.getenv(
+    "GITHUB_PAGES_URL", "https://marcusrh12.github.io/swagaholicsflowscanner7540"
+).strip()
+ENABLE_GITHUB_PAGES = True
+
+# --------------------------------------------------------------------------- #
 # Claude model
 # --------------------------------------------------------------------------- #
 CLAUDE_MODEL = "claude-fable-5"
@@ -53,6 +64,9 @@ MIN_MARKET_CAP = 1_000_000_000        # > $1B
 MIN_AVG_VOLUME = 500_000              # > 500K average volume
 MIN_PRICE = 10.0                      # > $10
 EXCHANGES = ["NYSE", "NASDAQ"]        # listed venues
+
+SKIP_NON_TRADING_DAYS = True          # skip scans on weekends and exchange holidays
+MARKET_EXCHANGE = "NASDAQ"            # exchange whose holiday calendar gates trading days
 
 EARNINGS_EXCLUSION_DAYS = 16          # skip tickers reporting within N days
 EARNINGS_LOOKAHEAD_DAYS = 90          # window used to find the nearest earnings date

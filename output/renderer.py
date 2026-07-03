@@ -98,8 +98,8 @@ def render(
     analysis: dict,
     tickers_scanned: int,
     streaks: Optional[dict] = None,
-) -> str:
-    """Render HTML, write latest + history files, and return the latest path."""
+) -> tuple[str, str]:
+    """Render HTML, write latest + history files, and return (latest path, HTML string)."""
     now = dt.datetime.now().astimezone()
     session_label = f"{session_name.title()} session"
 
@@ -128,4 +128,4 @@ def render(
     history_path.write_text(html, encoding="utf-8")
 
     logger.info("Rendered HTML -> %s (archived %s)", config.LATEST_HTML, history_path.name)
-    return str(config.LATEST_HTML)
+    return str(config.LATEST_HTML), html

@@ -28,6 +28,7 @@ from data import aggregator
 from data.fmp import FMPClient
 from data.unusual_whales import UnusualWhalesClient
 from data.vix import get_vix
+from output.publisher import publish_to_github
 
 logger = logging.getLogger("flowscanner.main")
 
@@ -205,7 +206,7 @@ async def _fetch_one(
 # --------------------------------------------------------------------------- #
 # Full scan
 # --------------------------------------------------------------------------- #
-async def run_scan(session_name: str) -> None:
+async def run_scan(session_name: str, force: bool = False) -> None:
     logger.info("=== Starting '%s' scan ===", session_name)
     started = dt.datetime.now()
 
@@ -215,6 +216,17 @@ async def run_scan(session_name: str) -> None:
     async with aiohttp.ClientSession(timeout=timeout) as http:
         fmp = FMPClient(http, semaphore)
         uw = UnusualWhalesClient(http, semaphore)
+
+        # Skip weekends and exchange holidays (unless explicitly forced).
+        if config.SKIP_NON_TRADING_DAYS and not force:
+            today = dt.date.today()
+            if not await fmp.is_trading_day(today):
+                logger.info(
+                    "=== %s is not a trading day; skipping '%s' scan ===",
+                    today.isoformat(),
+                    session_name,
+                )
+                return
 
         # Macro FMP data + screener + earnings + VIX in parallel.
         macro_tasks = {sym: fmp.get_ticker_data(sym) for sym in config.MACRO_TICKERS}
@@ -289,7 +301,17 @@ async def run_scan(session_name: str) -> None:
     # Render output (imported lazily so Jinja env picks up the template dir).
     from output import renderer
 
-    out_path = renderer.render(session_name, macro, analysis, tickers_scanned, streaks)
+    out_path, html_content = renderer.render(
+        session_name, macro, analysis, tickers_scanned, streaks
+    )
+
+    session_metadata = {
+        "session_type": session_name,
+        "date": dt.date.today().isoformat(),
+        "setups": len(analysis.get("trade_cards", [])),
+    }
+    if config.ENABLE_GITHUB_PAGES:
+        await publish_to_github(html_content, session_metadata)
 
     elapsed = (dt.datetime.now() - started).total_seconds()
     logger.info(
@@ -321,6 +343,11 @@ def main() -> None:
         choices=["now"],
         help="Bypass the scheduler and fire one scan immediately.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even on weekends/holidays (bypass the trading-day skip).",
+    )
     args = parser.parse_args()
 
     config.setup_logging()
@@ -337,7 +364,7 @@ def main() -> None:
 
     if args.run == "now":
         session = _infer_session_name()
-        asyncio.run(run_scan(session))
+        asyncio.run(run_scan(session, force=args.force))
     else:
         asyncio.run(scheduler.run_scheduler(run_scan))
 

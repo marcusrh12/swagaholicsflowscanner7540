@@ -188,6 +188,34 @@ class FMPClient:
         return mapping
 
     # ---------------------------------------------------------------- #
+    # Trading-day calendar
+    # ---------------------------------------------------------------- #
+    async def is_trading_day(self, day: dt.date) -> bool:
+        """
+        True if `day` is a regular exchange trading day. Weekends are always False;
+        weekdays are True unless the exchange holiday calendar marks the date closed.
+        Fails open (returns True) on API error, so a transient failure never silently
+        suppresses a scan.
+        """
+        if day.weekday() >= 5:  # Saturday / Sunday
+            return False
+        # The holiday endpoint needs a real date span (a single-day from==to range
+        # returns nothing), so query a window around the day and match the date.
+        rows = await self._get(
+            "holidays-by-exchange",
+            {
+                "exchange": config.MARKET_EXCHANGE,
+                "from": (day - dt.timedelta(days=7)).isoformat(),
+                "to": (day + dt.timedelta(days=7)).isoformat(),
+            },
+        )
+        if isinstance(rows, list):
+            for r in rows:
+                if r.get("date") == day.isoformat() and r.get("isClosed"):
+                    return False
+        return True
+
+    # ---------------------------------------------------------------- #
     # Price history + indicators
     # ---------------------------------------------------------------- #
     async def _daily_frame(self, symbol: str) -> Optional[pd.DataFrame]:
