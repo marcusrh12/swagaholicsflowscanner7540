@@ -31,7 +31,11 @@ for _d in (OUTPUT_DIR, HISTORY_DIR, LOGS_DIR):
 # --------------------------------------------------------------------------- #
 # API keys (loaded from .env -- never hardcode)
 # --------------------------------------------------------------------------- #
-load_dotenv(BASE_DIR / ".env")
+# Local runs read .env; on GitHub Actions no .env exists and the env vars are
+# injected directly, so this is a no-op there.
+_ENV_FILE = BASE_DIR / ".env"
+if _ENV_FILE.exists():
+    load_dotenv(_ENV_FILE)
 
 FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 UW_API_KEY = os.getenv("UW_API_KEY", "").strip()
@@ -40,11 +44,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 # --------------------------------------------------------------------------- #
 # GitHub Pages publishing
 # --------------------------------------------------------------------------- #
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
-GITHUB_USER = os.getenv("GITHUB_USER", "marcusrh12").strip()
-GITHUB_REPO = os.getenv("GITHUB_REPO", "swagaholicsflowscanner7540").strip()
-GITHUB_PAGES_URL = os.getenv(
-    "GITHUB_PAGES_URL", "https://marcusrh12.github.io/swagaholicsflowscanner7540"
+# GH_TOKEN is provided automatically by GitHub Actions; locally it comes from .env.
+GH_TOKEN = os.getenv("GH_TOKEN", "").strip()
+REPO_OWNER = os.getenv("REPO_OWNER", "marcusrh12").strip()
+REPO_NAME = os.getenv("REPO_NAME", "swagaholicsflowscanner7540").strip()
+PAGES_URL = os.getenv(
+    "PAGES_URL", "https://marcusrh12.github.io/swagaholicsflowscanner7540"
 ).strip()
 ENABLE_GITHUB_PAGES = True
 
@@ -104,9 +109,8 @@ MAX_DTE = 56                         # upper bound of the swing DTE window
 # Scan session times (local machine time, 24h "HH:MM")
 # --------------------------------------------------------------------------- #
 SCAN_SESSIONS = {
-    "premarket": "08:00",
-    "midday": "12:30",
-    "postmarket": "16:30",
+    "morning": "09:00",    # pre-open: captures the coming day + overnight / prior-close moves
+    "afternoon": "14:00",  # post-lunch: re-checks theses after the day has played out
 }
 
 # --------------------------------------------------------------------------- #

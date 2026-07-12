@@ -1,6 +1,6 @@
 # FlowScanner
 
-A stock-options scanner that runs three times daily (premarket, midday, postmarket)
+A stock-options scanner that runs twice daily (morning 09:00, afternoon 14:00)
 to identify high-probability swing **call** setups using multi-confluence analysis.
 
 It screens a large-cap US-equity universe, pulls price/technical/options/flow data,
@@ -98,6 +98,29 @@ notepad .env      # paste your three keys
 
 Keys live only in `.env`, which is gitignored and never committed.
 
+### GitHub Pages publishing config
+
+Publishing the report needs three non-sensitive settings plus a token:
+
+| Name | Sensitive? | Where it comes from |
+| --- | --- | --- |
+| `REPO_OWNER` | No | Actions **variable** (or `.env` locally) |
+| `REPO_NAME` | No | Actions **variable** (or `.env` locally) |
+| `PAGES_URL` | No | Actions **variable** (or `.env` locally) |
+| `GH_TOKEN` | Yes | Provided automatically by Actions; `.env` only for local runs |
+
+`REPO_OWNER`, `REPO_NAME`, and `PAGES_URL` carry no secret material — add them
+under **Settings → Secrets and variables → Actions → Variables** tab, *not* as
+secrets.
+
+`GH_TOKEN` is never configured by hand in Actions: every workflow run already
+receives `${{ secrets.GITHUB_TOKEN }}`, which the workflow maps to `GH_TOKEN`.
+You only set `GH_TOKEN` yourself in your local `.env` (a personal access token)
+when running the scanner on your own machine.
+
+> These names deliberately avoid the `GITHUB_` prefix — GitHub Actions reserves
+> it and refuses to create secrets or variables that start with it.
+
 ---
 
 ## Running
@@ -120,18 +143,73 @@ The page auto-refreshes every 5 minutes, so you can leave it open during a sessi
 
 ---
 
-## Configuring Windows Task Scheduler (recommended)
+## Running on GitHub Actions (primary)
 
-Instead of leaving the daemon running, schedule three tasks that each call
+The scanner runs itself on GitHub's hosted runners — no machine of yours needs to
+be on. The workflow lives at [`.github/workflows/scan.yml`](.github/workflows/scan.yml)
+and fires three times each weekday:
+
+| Session | Cron (UTC) | ET (EDT) |
+| --- | --- | --- |
+| `premarket` | `0 12 * * 1-5` | 8:00 AM |
+| `midday` | `30 16 * * 1-5` | 12:30 PM |
+| `postmarket` | `30 20 * * 1-5` | 4:30 PM |
+
+The cron schedule is mapped to a session name and passed to `main.py` as the
+`SESSION_TYPE` env var. Cron times are fixed UTC, so during EST (winter) each
+session lands an hour later in ET — shift the crons by one hour if that matters.
+
+### Secrets and variables to add
+
+Under **Settings → Secrets and variables → Actions**:
+
+**Secrets** tab — the three API keys:
+
+- `FMP_API_KEY`
+- `UW_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+**Variables** tab — the non-sensitive publishing config (`REPO_OWNER`,
+`REPO_NAME`, `PAGES_URL`). See [GitHub Pages publishing config](#github-pages-publishing-config)
+above.
+
+Do **not** create a `GH_TOKEN` secret. Every workflow run already receives
+`${{ secrets.GITHUB_TOKEN }}` automatically; the workflow maps it to `GH_TOKEN`
+for the Python step, and `permissions: contents: write` at the top of the
+workflow lets that token push commits back to the repo.
+
+### How history survives an ephemeral runner
+
+Runners get a clean disk every run, so `output/history/` — which `main.py` reads
+to compute day-over-day streaks — is persisted **in the repo itself**. The
+workflow pulls before the scan so the folder is populated, then commits the new
+timestamped history file plus `output/latest.html` back to `main` afterwards
+("Automated scan: {session} {date}"). `main.py` still reads history from local
+disk exactly as it did before; only the workflow changed. Because of this,
+`output/history/` is deliberately **not** gitignored.
+
+### Triggering a run by hand
+
+**Actions** tab → **FlowScanner Scan** → **Run workflow**. The optional
+`session_type` input (default `manual`) overrides the cron-derived session name
+and becomes the prefix of the archived history file.
+
+---
+
+## Configuring Windows Task Scheduler (local alternative)
+
+GitHub Actions is the primary schedule; the options below still work if you'd
+rather run the scanner on your own machine.
+
+Instead of leaving the daemon running, schedule two tasks that each call
 `--run now`. This is the most reliable option on Windows.
 
-For **each** session time (premarket 08:00, midday 12:30, postmarket 16:30 —
-edit as desired):
+For **each** session time (morning 09:00, afternoon 14:00 — edit as desired):
 
 1. Open **Task Scheduler** → **Create Task…**
-2. **General** tab: name it e.g. `FlowScanner Premarket`. Check
+2. **General** tab: name it e.g. `FlowScanner Morning`. Check
    *"Run whether user is logged on or not"*.
-3. **Triggers** tab → **New…** → *Daily*, set the start time (e.g. `08:00`),
+3. **Triggers** tab → **New…** → *Daily*, set the start time (e.g. `09:00`),
    recur every 1 day. (Optionally restrict to weekdays.)
 4. **Actions** tab → **New…**:
    - **Program/script:** `C:\Users\<you>\flowscanner\.venv\Scripts\python.exe`
@@ -139,7 +217,7 @@ edit as desired):
    - **Start in:** `C:\Users\<you>\flowscanner`
 5. **Conditions/Settings:** optionally *"Wake the computer to run this task"* and
    *"Run task as soon as possible after a scheduled start is missed"*.
-6. Click **OK** and repeat for the midday and postmarket times.
+6. Click **OK** and repeat for the afternoon time.
 
 Quick way to create one from PowerShell:
 
@@ -147,11 +225,11 @@ Quick way to create one from PowerShell:
 $py   = "C:\Users\<you>\flowscanner\.venv\Scripts\python.exe"
 $dir  = "C:\Users\<you>\flowscanner"
 $act  = New-ScheduledTaskAction -Execute $py -Argument "main.py --run now" -WorkingDirectory $dir
-$trg  = New-ScheduledTaskTrigger -Daily -At 8:00am
-Register-ScheduledTask -TaskName "FlowScanner Premarket" -Action $act -Trigger $trg
+$trg  = New-ScheduledTaskTrigger -Daily -At 9:00am
+Register-ScheduledTask -TaskName "FlowScanner Morning" -Action $act -Trigger $trg
 ```
 
-Repeat with `-At 12:30pm` and `-At 4:30pm` for the other two sessions.
+Repeat with `-At 2:00pm` for the afternoon session.
 
 ---
 
@@ -164,7 +242,7 @@ All scan parameters are in **`config.py`** and are safe to edit:
 - `TARGET_MIN_TICKERS` / `TARGET_MAX_TICKERS` — post-filter universe size
 - `MIN_FLOW_PREMIUM`, `FLOW_LOOKBACK_DAYS`, `TOP_OI_STRIKES` — options/flow
 - `MIN_CONFLUENCE_COUNT` — minimum confluences to emit a card
-- `SCAN_SESSIONS` — the three daily run times
+- `SCAN_SESSIONS` — the two daily run times
 - `AUTO_REFRESH_SECONDS` — HTML refresh cadence
 - `FMP_RATE_PER_MIN` / `UW_RATE_PER_MIN` / `HTTP_MAX_CONCURRENCY` — rate limits
 - `CLAUDE_MODEL` — the analysis model

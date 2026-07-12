@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="300" />
+  <title>FlowScanner &mdash; Postmarket session</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2029;
+      --panel-2: #212936;
+      --border: #2c3644;
+      --text: #e6edf3;
+      --muted: #8b98a9;
+      --green: #3fb950;
+      --red: #f85149;
+      --amber: #d29922;
+      --blue: #58a6ff;
+      --high: #3fb950;
+      --medium: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 18px 60px; }
+    header.top {
+      display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+      gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 20px;
+    }
+    header.top h1 { margin: 0; font-size: 22px; letter-spacing: 0.5px; }
+    header.top h1 span { color: var(--blue); }
+    .session-time { color: var(--muted); font-size: 13px; }
+    .macro-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px;
+    }
+    .macro-chip {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; font-size: 13px; min-width: 150px;
+    }
+    .macro-chip .k { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; }
+    .macro-chip .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+    .bullish { color: var(--green); }
+    .bearish { color: var(--red); }
+    .neutral { color: var(--amber); }
+    .summary {
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--blue);
+      border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; font-size: 14px; color: var(--text);
+    }
+    .error {
+      background: #2a1518; border: 1px solid var(--red); border-radius: 8px;
+      padding: 12px 16px; margin-bottom: 24px; color: #ffb3ab; font-size: 14px;
+    }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 18px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .card-head { display: flex; align-items: center; justify-content: space-between; }
+    .ticker { font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
+    .ticker small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 6px; }
+    .badges { display: flex; gap: 6px; align-items: center; }
+    .badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      padding: 4px 9px; border-radius: 20px;
+    }
+    .badge.High { background: rgba(63,185,80,0.15); color: var(--high); border: 1px solid var(--high); }
+    .badge.Medium { background: rgba(210,153,34,0.15); color: var(--medium); border: 1px solid var(--medium); }
+    .badge.count { background: var(--panel-2); color: var(--blue); border: 1px solid var(--border); }
+    .thesis { font-size: 13.5px; color: var(--text); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+    .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .metric .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .metric .v { font-size: 15px; font-weight: 600; margin-top: 1px; }
+    .metric .v.target { color: var(--green); }
+    .metric .v.stop { color: var(--red); }
+    .contract {
+      background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px;
+      padding: 10px 12px; font-size: 13px;
+    }
+    .contract .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .signals { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+    .signals li {
+      font-size: 12.5px; color: var(--text); padding-left: 18px; position: relative;
+    }
+    .signals li::before { content: "\2713"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+    .iv { font-size: 12px; color: var(--muted); font-style: italic; }
+    .empty {
+      text-align: center; padding: 60px 20px; color: var(--muted);
+      background: var(--panel); border: 1px dashed var(--border); border-radius: 12px;
+    }
+    footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: center; }
+    .rr { color: var(--blue); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1><span>Flow</span>Scanner</h1>
+        <div class="session-time">Postmarket session &middot; generated 2026-07-02 16:56:27 Eastern Daylight Time</div>
+      </div>
+      <div class="session-time">Auto-refresh every 5 min</div>
+    </header>
+
+    <div class="macro-bar">
+      <div class="macro-chip">
+        <div class="k">SPY</div>
+        <div class="v bullish">Bullish @ 744.80</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">QQQ</div>
+        <div class="v bullish">Bullish @ 712.60</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">VIX</div>
+        <div class="v bullish">16.15 (normal)</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Tickers Scanned</div>
+        <div class="v">59</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Qualifying Setups</div>
+        <div class="v">8</div>
+      </div>
+    </div>
+
+    
+
+    
+    <div class="summary">SPY is in a bullish trend above both key EMAs with RSI at 53 and VIX at a benign 16.15, providing a constructive macro backdrop for swing longs; however, QQQ shows relative weakness (RSI 48, -4.25% over 20 days) suggesting selective sector leadership rather than broad tech momentum, so only high-confluence setups merit entry.</div>
+    
+
+    
+    <div class="cards">
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">LLY<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">6 confluences</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">LLY is in a confirmed multi-timeframe uptrend with a bullish EMA stack, accelerating MACD, and RSI in the high 60s — a momentum sweet spot that historically precedes continuation moves. The stock has gained 12% over 20 days vs SPY&#39;s -1.25%, demonstrating exceptional relative strength as a defensive-growth leader. With $9.25M in smart money call flow anchored near the ATM 1200 strike and a clean stop below the 20-day swing low near 1080, the setup offers asymmetric upside to the 1238-1280 target zone.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>1210.0</strong>
+          &middot; Delta <strong>0.50-0.60</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">1210.50</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.20</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">1280.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">1130.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Full bullish EMA stack daily (8 &gt; 21 &gt; 50 &gt; 200); price at 1210.50 is above all EMAs including EMA8 (1181) and EMA200 (984); weekly above EMA21 — textbook uptrend structure.</li>
+          
+          <li>Momentum: Daily RSI 67.02 and weekly RSI 68.99 both in upper-bullish zone without being overbought; MACD line above signal with histogram positive and expanding (+4.197) — momentum accelerating.</li>
+          
+          <li>Volatility setup: ATR% of 3.26% is modest for a high-priced name; 20-day swing low at 1079.22 provides clear structural support; room to 20-day swing high at 1238 offers ~2.3% upside vs ~2.8% downside from entry to stop, but target extension to prior high gives better ratio.</li>
+          
+          <li>Options market: Put/call ratio of 0.623 is bullishly skewed; flow clustered at 1200, 1230, 1280 strikes — all near-ATM or modest OTM — suggesting real directional conviction rather than hedges.</li>
+          
+          <li>Smart money flow: $9.25M in total bullish premium across 27 events; largest print $1.637M at 1200 strike Aug-2026 ATM, showing smart money buying near-the-money calls aggressively.</li>
+          
+          <li>Macro alignment: SPY bullish trend; VIX 16.15 supportive; LLY shows exceptional relative strength at +7.34% (5-day) and +12.21% (20-day) vs SPY, among the best in the universe — clear sector leadership in Healthcare.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank is unavailable; with ATR% at 3.26% and LLY&#39;s typically moderate IV environment, premium is likely reasonable for debit buyers, especially with the large ATM flow suggesting market makers absorbed institutional buying without extreme IV spikes.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">AAPL<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">AAPL is breaking out from a multi-week consolidation base near the EMA cluster (275-295 zone), surging 12% over five days while the broader market was largely flat, signaling strong institutional accumulation. The MACD is inflecting bullishly, RSI is in the 60s on both daily and weekly without being overbought, and a record $45.9M in bullish call premium across 85 flow events confirms smart money is positioning for continuation toward the 317-330 target zone. Stop below the 20-day swing low at 273.75 provides a well-defined risk level with approximately 2.5x reward potential.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>310.0</strong>
+          &middot; Delta <strong>0.50-0.60</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">308.63</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.50</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">330.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">285.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Price at 308.63 is well above EMA200 (267.83) and above EMA8/21/50; weekly close above EMA21 with weekly trend bullish — strong multi-timeframe structure.</li>
+          
+          <li>Momentum: Daily RSI 60.26 and weekly RSI 63.34 both in bullish territory; MACD histogram turning positive (0.261) signaling momentum inflection to the upside.</li>
+          
+          <li>Volatility setup: ATR% of 2.83% is among the lowest in the universe, indicating contained volatility; swing low at 273.75 provides clear structural stop with meaningful ATR room to prior swing high at 317.40.</li>
+          
+          <li>Options market: Put/call ratio of 0.711 is bullishly skewed; massive bullish flow with strikes clustered at 300, 305, 310, and 330 confirming smart money positioning above current price.</li>
+          
+          <li>Smart money flow: Highest total bull premium in universe at $45.96M across 85 flow events; largest single print $15.1M at 330 strike Dec-2026 — institutional conviction at multiple strikes near and above market.</li>
+          
+          <li>Macro alignment: SPY bullish above EMAs, VIX 16.15 in normal regime; AAPL ret20 of -0.53% vs SPY -1.25% shows modest outperformance on 20-day basis; 5-day return +12.17% showing strong recent relative strength vs SPY (+10.74%).</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank is unavailable but given AAPL&#39;s historically low realized volatility (ATR% 2.83%) and the broad options flow suggesting premium was bought aggressively at market, IV is likely at a reasonable mid-range level — not a clear IV headwind for debit buyers.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">PANW<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">PANW is exhibiting the strongest sustained relative strength in the scanned universe (+24% vs SPY over 20 days) with an unambiguous bullish EMA stack and RSI momentum near 80 — a breakout-continuation signal rather than a mean-reversion trap. The daily and weekly MACD are both positive and expanding, confirming underlying buying pressure. With $11.6M in smart money flow and earnings 46 days out (creating a clean swing window to the Aug-17 event), the 325-360 consolidation zone suggests a measured move to the 380-400 zone on continuation.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-07</strong>
+          &middot; Strike <strong>350.0</strong>
+          &middot; Delta <strong>0.52-0.62</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">348.06</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">390.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">323.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Full bullish daily EMA stack (8 &gt; 21 &gt; 50 &gt; 200); price at 348.06 is above all EMAs; weekly above EMA21 with weekly EMA8 well below price — strong structure on both timeframes.</li>
+          
+          <li>Momentum: Daily RSI at 78.46 and weekly RSI at 82.41 — both in strongly overbought/momentum territory signaling persistent buying pressure; MACD line above signal with histogram positive and expanding (+4.871).</li>
+          
+          <li>Volatility setup: ATR% of 3.83% is contained relative to peers; 20-day swing low at 251.15 defines the broader stop; near-term consolidation stop at 325 (EMA8 confluence) provides tighter risk management.</li>
+          
+          <li>Options market: Put/call ratio of 1.686 is elevated (bearish skew in ratio) which is noted as a slight headwind, but options are dominated by large bullish call flow suggesting hedgers driving put OI rather than directional bears.</li>
+          
+          <li>Smart money flow: $11.6M in bullish premium across 58 flow events; largest print $1.606M at 310 strike Sep-2026 deep ITM — suggests smart money was rolling/establishing positions aggressively; flow across 295-360 strike range confirms multi-level accumulation.</li>
+          
+          <li>Macro alignment: SPY bullish; VIX supportive at 16.15; PANW +18.76% over 5 days and +24.12% over 20 days vs SPY — the strongest sustained relative strength in the entire universe, a sector leader with clear institutional support.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank unavailable; given the sharp recent move (+18% in 5 days), IV may be elevated on short-dated options — buying the Aug-7 expiration provides sufficient time for the move to develop while the elevated premium risk from a momentum spike is manageable with a strike near ATM.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">HOOD<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">HOOD has surged 36% over 20 days relative to SPY&#39;s decline, establishing itself as a clear sector momentum leader with RSI in the bullish 67 zone and MACD expanding positively. The options market is aggressively positioned with a 0.393 put/call ratio and $10M in call premium across 73 separate flow events, indicating institutional accumulation rather than speculative noise. A measured move from the current consolidation near the swing high at 120 targets 130-135 on continuation, with the 20-day swing low at 79 providing a wide but structural stop.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>113.0</strong>
+          &middot; Delta <strong>0.50-0.60</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">112.73</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.20</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">130.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">95.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Price at 112.73 is above EMA200 (90.93) and above EMA8 (103.95) and EMA21 (97.62) and EMA50 (90.41); weekly above EMA21 — clean uptrend structure; note EMA stack not fully bullish (ema_stack_bullish=false) due to EMA200 ordering, but price position and direction are clearly bullish.</li>
+          
+          <li>Momentum: Daily RSI 67.01 is in bullish momentum zone without being extreme; MACD line above signal with histogram positive (+0.726) and in expansion phase — trend momentum is intact.</li>
+          
+          <li>Volatility setup: ATR% of 6.07% suggests active movement; 20-day swing low at 78.93 defines the bull thesis invalidation; 20-day swing high at 120.05 is the near-term target with extension to 130+.</li>
+          
+          <li>Options market: Exceptionally bullish put/call ratio of 0.393 — one of the most bullish skews in the universe; heavy flow at 105, 110, 115, 120, 125 strikes surrounding current price showing coordinated call buying.</li>
+          
+          <li>Smart money flow: $10.03M in bull premium across 73 flow events; largest print $1.02M at 105 Oct-2026 representing deep accumulation; flow is recent and near-ATM suggesting active directional positioning.</li>
+          
+          <li>Macro alignment: VIX 16.15 supportive; HOOD +20.61% 5-day and massive +36.07% 20-day return vs SPY, clearly the strongest medium-term relative strength performer in Financial Services — momentum driven by likely business fundamentals and sector rotation.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank unavailable; given the extreme relative strength move (+36% in 20 days), IV on HOOD options is likely elevated — buyers should be aware of potential premium richness and prefer the Aug-21 expiration for adequate time buffer over shorter-dated contracts.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">V<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">Visa is breaking out to new 20-day highs with accelerating MACD, RSI at 77 (momentum leadership, not yet reversal territory), and the cleanest low-volatility trending structure in the universe (ATR% 2.16%). The stock has outperformed SPY by nearly 17 percentage points over 20 days while maintaining measured price action, suggesting institutional rotation into payment processing names. With smart money call flow concentrated at 370-380 and a 2.16% ATR making options premium relatively cheap, the setup offers clean defined risk to the 380-390 target zone.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-09-18</strong>
+          &middot; Strike <strong>365.0</strong>
+          &middot; Delta <strong>0.52-0.62</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">362.13</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.30</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">390.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">338.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Price at 362.13 is above EMA200 (328.74), EMA50 (327.38), EMA21 (334.36), and EMA8 (343.86); weekly above EMA21 — price is in a clean uptrend across all measured timeframes.</li>
+          
+          <li>Momentum: Daily RSI at 76.74 is in strong bullish momentum territory; weekly RSI 67.58 confirms multi-timeframe strength; MACD line above signal with histogram strongly positive and expanding (+3.204) — momentum is accelerating.</li>
+          
+          <li>Volatility setup: ATR% of 2.16% is one of the lowest in the universe — ideal for option buyers seeking low-cost premium entries; 20-day swing low at 316.70 defines the structural stop; price is at the 20-day swing high (362.13) suggesting a potential breakout continuation.</li>
+          
+          <li>Options market: Put/call ratio of 0.481 — strongly bullish skew; flow clustered at 340, 352.5, 360, 370, 375, 380 strikes spanning ATM to modest OTM confirming multi-level accumulation.</li>
+          
+          <li>Smart money flow: $5.74M in bullish premium across 19 flow events; flow is concentrated at near-ATM and just OTM strikes (360-380) suggesting smart money is positioning for a controlled breakout rather than a lottery ticket move.</li>
+          
+          <li>Macro alignment: SPY bullish trend, VIX 16.15 supportive; V shows exceptional relative strength at +9.56% (5-day) and +15.92% (20-day) vs SPY — among the top performers in Financial Services, benefiting from consumer spending resilience.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV is likely at low-to-moderate levels given V&#39;s historically contained volatility (ATR% 2.16%) and large-cap liquid options market — this makes V calls among the most attractively priced debit entries in the current scan, with minimal IV crush risk on a directional move.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">GEV<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">4 confluences</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        <div class="thesis">GEV (GE Vernova) is in a confirmed bullish EMA stack with the strongest daily MACD histogram expansion in the universe, signaling institutional accumulation of a clear market leader in the energy infrastructure buildout theme. The 20-day relative strength of +16% vs SPY demonstrates persistent sector leadership, and $10.85M in smart money call flow across 45 events spanning near-term to 2027 expirations confirms multi-horizon conviction. The setup targets a measured move to the prior 20-day swing high at 1178, with stop below the EMA8/21 confluence near 1050.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>1115.0</strong>
+          &middot; Delta <strong>0.50-0.58</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">1113.11</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.40</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">1200.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">1045.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Full bullish daily EMA stack confirmed; price at 1113.11 is above EMA8 (1099.95), EMA21 (1055.12), EMA50 (1017.58), and EMA200 (836.59); weekly above EMA21 — textbook uptrend.</li>
+          
+          <li>Momentum: Daily RSI 57.21 is mid-bullish, not overbought; MACD histogram strongly positive and expanding at +14.045 — the largest positive histogram reading relative to signal in the scan, indicating powerful momentum acceleration; weekly RSI 65.31.</li>
+          
+          <li>Volatility setup: ATR% of 4.83% provides active range; 20-day swing low at 856.01 defines the structural stop; swing high at 1178 is the near-term target with room for further extension.</li>
+          
+          <li>Smart money flow: $10.85M in bull premium across 45 flow events; flow spread across 1030-1200 strike range at multiple expirations including Mar-2027 LEAPs, suggesting genuine institutional accumulation rather than short-term speculation.</li>
+          
+          <li>Macro alignment: SPY bullish trend, VIX 16.15 supportive; GEV +2.55% (5-day) and exceptional +16.03% (20-day) vs SPY — top relative strength performer in the Utilities/Infrastructure sector with clear institutional support.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank unavailable; GEV&#39;s ATR% of 4.83% is moderate — options premium is likely at a reasonable mid-range level for this large-cap industrial, making near-ATM calls an acceptable entry for premium buyers without significant IV crush risk.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">APP<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">4 confluences</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        <div class="thesis">APP has surged 18% in 5 days from a base near the EMA50/EMA200 cluster (~490-500 area), recovering above all key moving averages while maintaining a clean bullish EMA stack structure. The large smart money print at $1.92M targeting the 650 strike by November suggests institutions see significant rerating potential, while near-term flow at 520-550 confirms tactical accumulation. The MACD crossover and positive histogram signal early momentum, making this a momentum re-entry setup with a measured move target at the prior 20-day swing high of 595.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>530.0</strong>
+          &middot; Delta <strong>0.48-0.58</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">527.06</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">595.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">490.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Full bullish EMA stack (8 &gt; 21 &gt; 50 &gt; 200) confirmed; price at 527.06 is above all four EMAs; weekly above EMA21 — the EMAs are in a strong upward order with price leading.</li>
+          
+          <li>Momentum: Daily RSI 54.13 is in neutral-bullish zone with room to run; MACD histogram positive at +4.629 and in expansion — early-stage positive momentum crossover; weekly RSI 53.46 confirms mid-cycle positioning.</li>
+          
+          <li>Options market: Put/call ratio of 1.176 is slightly elevated but flow analysis overrides — heavy call premium at 520, 530, 550, 600 strikes spanning near to medium term.</li>
+          
+          <li>Smart money flow: $10.52M in bullish premium across 41 flow events; standout print of $1.923M at 650 strike Nov-2026 — a large, longer-dated OTM bet indicating institutional conviction in significant upside; near-term flow at 520-550 shows tactical positioning as well.</li>
+          
+          <li>Macro alignment: VIX supportive; APP +18.19% over 5 days vs SPY +1.43% — strong relative outperformance; note 20-day return is -7.67% suggesting the 5-day move is a recovery from weakness, which creates a momentum re-entry setup rather than a breakout.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank unavailable; with a 18% 5-day surge, short-dated IV on APP is likely elevated — the Aug-21 expiration provides sufficient time decay buffer while allowing the momentum thesis to play out without requiring an immediate continuation move.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">JNJ<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">4 confluences</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        <div class="thesis">JNJ is approaching all-time highs with a full bullish EMA stack, accelerating MACD, and RSI at 73 — a momentum leadership profile typically associated with sustained breakouts rather than reversals in large-cap defensive names. The 20-day outperformance of +17.83% vs SPY reflects genuine rotation into Healthcare quality, and while smart money flow is modest ($1.65M), the deep ITM LEAP anchor at 250 strike indicates long-term institutional conviction. A break above the 20-day swing high at 263.10 targets the 275-280 zone.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>265.0</strong>
+          &middot; Delta <strong>0.50-0.60</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">263.04</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.10</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">280.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">245.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: Full bullish daily EMA stack (8 &gt; 21 &gt; 50 &gt; 200); price at 263.04 is above all EMAs; weekly above EMA21 — clean multi-timeframe uptrend structure in a traditionally defensive name.</li>
+          
+          <li>Momentum: Daily RSI 73.12 and weekly RSI 66.77 both in strong bullish momentum zone; MACD line above signal with histogram positive and expanding (+2.512) — momentum is accelerating near 52-week highs.</li>
+          
+          <li>Smart money flow: $1.647M in bull premium across 7 flow events; flow concentrated at 250 (deep ITM LEAP), 260, 270, 290 strikes — the 250 LEAP at $460K is a high-conviction long-dated anchor suggesting institutional belief in sustained appreciation.</li>
+          
+          <li>Macro alignment: SPY bullish, VIX 16.15 supportive; JNJ +7.42% (5-day) and exceptional +17.83% (20-day) vs SPY — among the top relative strength performers overall, demonstrating classic defensive rotation into quality Healthcare.</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV is likely low-to-moderate for JNJ given its historically low realized volatility (ATR% 2.18%) and defensive large-cap profile — this makes calls attractively priced for premium buyers, though the absolute dollar premium will be modest relative to higher-beta names.</div>
+        
+      </div>
+      
+    </div>
+    
+
+    <footer>
+      FlowScanner &middot; for research and educational use only &middot; not investment advice.
+    </footer>
+  </div>
+</body>
+</html>

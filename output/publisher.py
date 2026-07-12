@@ -28,9 +28,9 @@ async def publish_to_github(html_content: str, session_metadata: dict) -> None:
     via a PUT. Logs the live Pages URL on success. Any failure is logged and
     swallowed so a publishing hiccup never crashes the scan.
     """
-    url = _CONTENTS_URL.format(user=config.GITHUB_USER, repo=config.GITHUB_REPO)
+    url = _CONTENTS_URL.format(user=config.REPO_OWNER, repo=config.REPO_NAME)
     headers = {
-        "Authorization": f"Bearer {config.GITHUB_TOKEN}",
+        "Authorization": f"Bearer {config.GH_TOKEN}",
         "Accept": "application/vnd.github+json",
     }
 
@@ -58,4 +58,4 @@ async def publish_to_github(html_content: str, session_metadata: dict) -> None:
         logger.error("GitHub Pages publish failed: %s", exc)
         return
 
-    logger.info("Published report to GitHub Pages -> %s", config.GITHUB_PAGES_URL)
+    logger.info("Published report to GitHub Pages -> %s", config.PAGES_URL)

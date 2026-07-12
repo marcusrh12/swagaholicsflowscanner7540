@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="300" />
+  <title>FlowScanner &mdash; Postmarket session</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2029;
+      --panel-2: #212936;
+      --border: #2c3644;
+      --text: #e6edf3;
+      --muted: #8b98a9;
+      --green: #3fb950;
+      --red: #f85149;
+      --amber: #d29922;
+      --blue: #58a6ff;
+      --high: #3fb950;
+      --medium: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 18px 60px; }
+    header.top {
+      display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+      gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 20px;
+    }
+    header.top h1 { margin: 0; font-size: 22px; letter-spacing: 0.5px; }
+    header.top h1 span { color: var(--blue); }
+    .session-time { color: var(--muted); font-size: 13px; }
+    .macro-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px;
+    }
+    .macro-chip {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; font-size: 13px; min-width: 150px;
+    }
+    .macro-chip .k { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; }
+    .macro-chip .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+    .bullish { color: var(--green); }
+    .bearish { color: var(--red); }
+    .neutral { color: var(--amber); }
+    .summary {
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--blue);
+      border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; font-size: 14px; color: var(--text);
+    }
+    .error {
+      background: #2a1518; border: 1px solid var(--red); border-radius: 8px;
+      padding: 12px 16px; margin-bottom: 24px; color: #ffb3ab; font-size: 14px;
+    }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 18px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 18px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .card-head { display: flex; align-items: center; justify-content: space-between; }
+    .ticker { font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
+    .ticker small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 6px; }
+    .badges { display: flex; gap: 6px; align-items: center; }
+    .badge {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      padding: 4px 9px; border-radius: 20px;
+    }
+    .badge.High { background: rgba(63,185,80,0.15); color: var(--high); border: 1px solid var(--high); }
+    .badge.Medium { background: rgba(210,153,34,0.15); color: var(--medium); border: 1px solid var(--medium); }
+    .badge.count { background: var(--panel-2); color: var(--blue); border: 1px solid var(--border); }
+    .thesis { font-size: 13.5px; color: var(--text); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+    .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .metric .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .metric .v { font-size: 15px; font-weight: 600; margin-top: 1px; }
+    .metric .v.target { color: var(--green); }
+    .metric .v.stop { color: var(--red); }
+    .contract {
+      background: var(--panel-2); border: 1px dashed var(--border); border-radius: 8px;
+      padding: 10px 12px; font-size: 13px;
+    }
+    .contract .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .signals { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+    .signals li {
+      font-size: 12.5px; color: var(--text); padding-left: 18px; position: relative;
+    }
+    .signals li::before { content: "\2713"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+    .iv { font-size: 12px; color: var(--muted); font-style: italic; }
+    .empty {
+      text-align: center; padding: 60px 20px; color: var(--muted);
+      background: var(--panel); border: 1px dashed var(--border); border-radius: 12px;
+    }
+    footer { margin-top: 40px; color: var(--muted); font-size: 12px; text-align: center; }
+    .rr { color: var(--blue); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1><span>Flow</span>Scanner</h1>
+        <div class="session-time">Postmarket session &middot; generated 2026-07-02 19:10:40 Eastern Daylight Time</div>
+      </div>
+      <div class="session-time">Auto-refresh every 5 min</div>
+    </header>
+
+    <div class="macro-bar">
+      <div class="macro-chip">
+        <div class="k">SPY</div>
+        <div class="v bullish">Bullish @ 744.78</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">QQQ</div>
+        <div class="v bullish">Bullish @ 712.60</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">VIX</div>
+        <div class="v bullish">16.15 (normal)</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Tickers Scanned</div>
+        <div class="v">59</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Qualifying Setups</div>
+        <div class="v">5</div>
+      </div>
+    </div>
+
+    
+
+    
+    <div class="summary">SPY remains in a bullish structure above its 50/200 EMAs with VIX at 16 and falling, but the tape is bifurcated: semiconductors and high-beta storage names are correcting sharply while quality growth (AAPL, LLY, SNOW, V, HOOD) shows strong relative strength. Posture is selectively bullish in leadership names, avoiding the crowded semi complex.</div>
+    
+
+    
+    <div class="cards">
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">LLY<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922;">2nd hit</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">LLY is the cleanest full-confluence setup in the scan: pristine bullish EMA stack, expanding momentum, sector-leading relative strength, and institutional call buying at 1200 while IV rank sits at a reasonable 44.6. A push through the 1238 swing high projects an ATR-based move toward 1300. Streak note: 2nd consecutive session on the scanner with 6 confluences, stable-to-strengthening.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-07</strong>
+          &middot; Strike <strong>1200.0</strong>
+          &middot; Delta <strong>0.55-0.65</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">1210.50</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.10</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">1300.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">1168.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: full bullish daily EMA stack (8&gt;21&gt;50&gt;200), price above all EMAs, weekly close above rising 8/21 EMAs</li>
+          
+          <li>Momentum: daily RSI 67 and weekly RSI 69 with MACD line above signal and histogram expanding positively</li>
+          
+          <li>Volatility setup: IV rank 44.6 is moderate/cheap for entry with ATR of ~39 giving room to the 1238 breakout and beyond</li>
+          
+          <li>Options market: put/call ratio 0.62 skews bullish with OI/flow clustering at 1200 and 1280 strikes</li>
+          
+          <li>Smart money flow: 9.2M in aggregate bullish call premium including 1.6M sweep at Aug 1200 calls</li>
+          
+          <li>Macro alignment: SPY bullish, VIX normal, and LLY outperforming SPY by +13.5 over 20 days</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank of 44.6 with 37% IV is reasonably cheap for a mega-cap in a momentum uptrend, making long premium viable.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">SNOW<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922;">2nd hit</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">SNOW is coiling directly under the 264.96 twenty-day high after a five-day momentum thrust, with institutional flow stacked at the 270 strike. A breakout projects a measured move toward 288 while IV remains only mid-range. Streak note: 2nd consecutive session on the scanner with 6 confluences, stable. Earnings are 55 days out and beyond the trade horizon.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-07-31</strong>
+          &middot; Strike <strong>270.0</strong>
+          &middot; Delta <strong>0.45-0.55; 29 DTE chosen because this is a tight consolidation breakout with a ~10% target, fitting a 3-4 week momentum window while staying ahead of any theta crunch</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">260.15</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">288.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">246.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: bullish daily EMA stack, price above all EMAs, weekly close above rising 8/21 EMAs</li>
+          
+          <li>Momentum: daily RSI 68.6 with MACD positive and histogram turning up; weekly RSI 66.5 confirms</li>
+          
+          <li>Volatility setup: IV rank 46 is moderate, price pressing the 264.96 swing high with ~13 ATR of measured-move room</li>
+          
+          <li>Options market: put/call ratio 0.40 is strongly call-skewed with heavy clustering at the 270 strike</li>
+          
+          <li>Smart money flow: 7.3M bullish premium including repeated 270-strike July call sweeps</li>
+          
+          <li>Macro alignment: SPY bullish, VIX normal, SNOW outperforming SPY by +13.1 over 5 days and +9.1 over 20 days</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank of 46 is mid-range and acceptable for buying premium into a breakout, especially with strong call skew (P/C 0.40).</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">AAPL<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span><span class="badge" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922;">2nd hit</span>
+            <span class="badge High">High</span>
+          </div>
+        </div>
+
+        <div class="thesis">AAPL just reclaimed the 300 level with a powerful 5-day thrust and closed at a fresh short-term high, backed by the largest institutional call premium in the universe including a $15M Dec 330 block. Path of least resistance is a retest of the 317.4 swing high and extension toward the 330 institutional target. Streak note: 2nd consecutive session on the scanner with confluence stable at 5. IV rank at 66.9 is the one drawback, so volatility setup does not fire.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>310.0</strong>
+          &middot; Delta <strong>0.50-0.60; 50 DTE chosen because the measured move to 325-330 is a larger multi-week target with heavy institutional flow, warranting the 4-6 week end of the window</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">308.63</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">1.50</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">330.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">294.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: price above all daily EMAs and 15% above the 200 EMA, weekly close above rising 8/21 EMAs</li>
+          
+          <li>Momentum: daily RSI 60.3 with MACD histogram flipping positive; weekly RSI 63.3 rising</li>
+          
+          <li>Options market: put/call ratio 0.71 with OI/flow clustering at 300/310/330 strikes</li>
+          
+          <li>Smart money flow: 46M in aggregate bullish call premium (largest in the scan), including a 15.1M block in Dec 330 calls</li>
+          
+          <li>Macro alignment: SPY bullish, VIX normal, AAPL outperforming SPY by +10.7 over 5 days</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank 66.9 is somewhat elevated for buying premium, mitigated by low absolute IV (28%) and strong directional flow support.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">HOOD<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span><span class="badge" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922;">2nd hit</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        <div class="thesis">HOOD is the strongest relative-strength name in the universe, closing at new short-term highs just under the 120.05 swing high with persistent bullish flow and a heavily call-skewed book. A break of 120 projects an ATR-based extension to ~128. Streak note: 2nd consecutive session on the scanner (5 confluences prior), confluence stable. IV rank 52 is only middling, keeping this at Medium confidence.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-07-31</strong>
+          &middot; Strike <strong>115.0</strong>
+          &middot; Delta <strong>0.50-0.60; 29 DTE chosen because this is a momentum continuation into a near-term breakout level, fitting a 3-4 week swing rather than a longer measured move</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">112.73</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">1.65</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">128.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">103.50</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Trend alignment: price above all daily EMAs including the 200, weekly close above rising 8/21 EMAs (50/200 daily cross still pending)</li>
+          
+          <li>Momentum: daily RSI 67 with MACD line above signal and histogram positive; weekly RSI 60 rising</li>
+          
+          <li>Options market: put/call ratio 0.39 strongly call-skewed with flow clustering at 105/115/120 strikes</li>
+          
+          <li>Smart money flow: 10M in bullish call premium across 73 alerts including a 1M Oct 105 block</li>
+          
+          <li>Macro alignment: SPY bullish, VIX normal, HOOD outperforming SPY by +37.3 over 20 days -- best relative strength in the scan</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank 52 is mid-range -- not cheap, but tolerable given the extreme call skew and momentum character.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">PLTR<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">5 confluences</span><span class="badge" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922;">2nd hit</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        <div class="thesis">PLTR has reclaimed its 8 and 21 EMAs after a capitulation low at 106 and is rallying on cheap IV with heavy August call accumulation at 120-125. Trend alignment does not yet fire (still below the 50/200 EMAs), making this a mean-reversion-to-trend recovery play targeting the 140 area. Streak note: 2nd consecutive session on the scanner (5 confluences prior), confluence stable.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong>
+          &middot; Strike <strong>130.0</strong>
+          &middot; Delta <strong>0.45-0.55; 50 DTE chosen because a recovery through the 50 EMA toward 140 is a multi-week repair process and institutional flow is concentrated in the August expiry</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Ref</div>
+            <div class="v">129.30</div>
+          </div>
+          <div class="metric">
+            <div class="k">R / R</div>
+            <div class="v rr">2.20</div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">141.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">124.00</div>
+          </div>
+        </div>
+
+        <ul class="signals">
+          
+          <li>Momentum: MACD histogram positive and curling up with daily RSI reclaiming the 50 line after a washout to 106</li>
+          
+          <li>Volatility setup: IV rank 39.8 is cheap for this name, with ~6.8 ATR of room to the 50 EMA and beyond</li>
+          
+          <li>Options market: put/call ratio 0.40 strongly call-skewed with OI/flow clustering at 120/125/130 strikes</li>
+          
+          <li>Smart money flow: 12.1M bullish premium across 73 alerts concentrated in Aug 120/125 calls</li>
+          
+          <li>Macro alignment: SPY bullish, VIX normal, PLTR outperforming SPY by +19.1 over the past 5 days</li>
+          
+        </ul>
+
+        
+        <div class="iv">IV: IV rank 39.8 is genuinely cheap for PLTR, making long calls an attractive way to express the recovery.</div>
+        
+      </div>
+      
+    </div>
+    
+
+    <footer>
+      FlowScanner &middot; for research and educational use only &middot; not investment advice.
+    </footer>
+  </div>
+</body>
+</html>

@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import datetime as dt
 import logging
+import os
 import re
 import sys
 
@@ -324,7 +325,14 @@ async def run_scan(session_name: str, force: bool = False) -> None:
 
 
 def _infer_session_name() -> str:
-    """Pick the configured session whose time is nearest to now (for manual runs)."""
+    """
+    Session name for a manual run: SESSION_TYPE if set (GitHub Actions passes the
+    cron-derived name), otherwise the configured session whose time is nearest now.
+    """
+    override = os.getenv("SESSION_TYPE", "").strip()
+    if override:
+        return override
+
     now = dt.datetime.now()
     best_name, best_delta = "manual", None
     for name, hhmm in config.SCAN_SESSIONS.items():

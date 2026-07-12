@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 logs/
-output/history/
+# output/history/ is intentionally NOT ignored: on GitHub Actions' ephemeral
+# runners the git repo is the only persistent store for day-over-day streaks.

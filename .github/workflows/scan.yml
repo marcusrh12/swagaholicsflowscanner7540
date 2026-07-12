@@ -1,0 +1,94 @@
+name: FlowScanner Scan
+
+on:
+  schedule:
+    - cron: '0 12 * * 1-5'   # 8:00 AM ET (EDT) premarket, weekdays
+    - cron: '30 16 * * 1-5'  # 12:30 PM ET (EDT) midday, weekdays
+    - cron: '30 20 * * 1-5'  # 4:30 PM ET (EDT) postmarket, weekdays
+  workflow_dispatch:
+    inputs:
+      session_type:
+        description: 'Session type override'
+        required: false
+        default: 'manual'
+
+# Lets the built-in GITHUB_TOKEN push the history/latest.html commit back to main.
+permissions:
+  contents: write
+
+concurrency:
+  group: flowscanner-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Determine session type
+        id: session
+        env:
+          DISPATCH_SESSION: ${{ github.event.inputs.session_type }}
+        run: |
+          if [ -n "$DISPATCH_SESSION" ]; then
+            session="$DISPATCH_SESSION"
+          else
+            case "${{ github.event.schedule }}" in
+              '0 12 * * 1-5')  session=premarket ;;
+              '30 16 * * 1-5') session=midday ;;
+              '30 20 * * 1-5') session=postmarket ;;
+              *)               session=manual ;;
+            esac
+          fi
+          echo "session_type=$session" >> "$GITHUB_OUTPUT"
+          echo "Session type: $session"
+
+      # The runner has no persistent disk. output/history/ lives in the repo, so
+      # pull it before the scan — main.py reads it from local disk unchanged.
+      - name: Pull latest history from the repo
+        run: git pull --rebase --autostash origin ${{ github.ref_name }}
+
+      - name: Run scan
+        env:
+          SESSION_TYPE: ${{ steps.session.outputs.session_type }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          UW_API_KEY: ${{ secrets.UW_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Automatically provided by Actions — never configured as a manual secret.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Non-sensitive: repository variables, not secrets.
+          REPO_OWNER: ${{ vars.REPO_OWNER }}
+          REPO_NAME: ${{ vars.REPO_NAME }}
+          PAGES_URL: ${{ vars.PAGES_URL }}
+        run: python main.py --run now
+
+      - name: Commit and push scan output
+        env:
+          SESSION_TYPE: ${{ steps.session.outputs.session_type }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/history output/latest.html
+          if git diff --cached --quiet; then
+            echo "No scan output to commit (non-trading day or no changes)."
+            exit 0
+          fi
+          git commit -m "Automated scan: $SESSION_TYPE $(date -u +%Y-%m-%d)"
+          git pull --rebase --autostash origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
