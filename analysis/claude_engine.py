@@ -25,6 +25,16 @@ logger = logging.getLogger("flowscanner.claude")
 _CONFIDENCE_RANK = {"high": 0, "medium": 1}
 
 
+class ClaudeRefusal(Exception):
+    """The model declined the request (stop_reason == "refusal")."""
+
+    def __init__(self, model: str, category: Optional[str] = None):
+        self.model = model
+        self.category = category
+        detail = f" (category: {category})" if category else ""
+        super().__init__(f"{model} refused the request{detail}")
+
+
 def _extract_json(text: str) -> Optional[dict]:
     """Pull the first top-level JSON object out of the model text."""
     text = text.strip()
@@ -119,9 +129,12 @@ class ClaudeEngine:
             timeout=config.CLAUDE_TIMEOUT_SECONDS,
         )
 
-    async def _call(self, system_prompt: str, user_content: str) -> Optional[str]:
+    async def _call(
+        self, system_prompt: str, user_content: str, model: Optional[str] = None
+    ) -> Optional[str]:
+        model = model or config.CLAUDE_MODEL
         kwargs: dict[str, Any] = dict(
-            model=config.CLAUDE_MODEL,
+            model=model,
             max_tokens=config.CLAUDE_MAX_TOKENS,
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
@@ -132,29 +145,84 @@ class ClaudeEngine:
         if getattr(config, "CLAUDE_EFFORT", ""):
             kwargs["output_config"] = {"effort": config.CLAUDE_EFFORT}
         message = await self._client.messages.create(**kwargs)
+
+        # A safety refusal returns HTTP 200 with an empty content list, so this has
+        # to be checked before reading content — otherwise it looks like a generic
+        # empty response and burns the retry on a call that will refuse again.
+        if getattr(message, "stop_reason", None) == "refusal":
+            details = getattr(message, "stop_details", None)
+            raise ClaudeRefusal(model, getattr(details, "category", None))
+
         # Concatenate all text blocks.
         parts = [b.text for b in message.content if getattr(b, "type", None) == "text"]
         return "".join(parts) if parts else None
+
+    async def _analyze_once(
+        self, system_prompt: str, user_content: str, model: str
+    ) -> dict:
+        """One call + parse. Raises on refusal, empty output, or unparseable JSON."""
+        text = await self._call(system_prompt, user_content, model=model)
+        if not text:
+            raise ValueError("Empty response from Claude")
+        parsed = _extract_json(text)
+        if parsed is None:
+            raise ValueError("Could not parse JSON from Claude response")
+        summary, cards = _validate_cards(parsed)
+        logger.info(
+            "Claude (%s) produced %s qualifying trade card(s)", model, len(cards)
+        )
+        return {"market_summary": summary, "trade_cards": cards, "error": None}
+
+    async def _fallback_after_refusal(
+        self, system_prompt: str, user_content: str, session: str
+    ) -> dict:
+        """Re-run the same prompt on the fallback model after a refusal."""
+        fallback = config.CLAUDE_FALLBACK_MODEL
+        logger.warning(
+            "Falling back to %s for session %s after refusal by %s",
+            fallback,
+            session,
+            config.CLAUDE_MODEL,
+        )
+        try:
+            return await self._analyze_once(system_prompt, user_content, fallback)
+        except ClaudeRefusal:
+            message = (
+                f"Claude refused the request for session {session}: "
+                f"{config.CLAUDE_MODEL} and fallback {fallback} both refused"
+            )
+        except Exception as exc:
+            message = (
+                f"Claude refused the request for session {session} "
+                f"({config.CLAUDE_MODEL}); fallback {fallback} failed: {exc}"
+            )
+        logger.error(message)
+        return {"market_summary": "", "trade_cards": [], "error": message}
 
     async def analyze(self, payload: dict) -> dict:
         """
         Run the confluence analysis. Returns:
           {"market_summary": str, "trade_cards": [...], "error": Optional[str]}
-        Retries once after config.CLAUDE_RETRY_DELAY_SECONDS on failure.
+        Retries once after config.CLAUDE_RETRY_DELAY_SECONDS on failure. A refusal
+        is not retried on the same model — it falls back to CLAUDE_FALLBACK_MODEL.
         """
         system_prompt, user_content = prompt_builder.build_messages(payload)
+        session = str(payload.get("scan_session", "unknown"))
 
         for attempt in (1, 2):
             try:
-                text = await self._call(system_prompt, user_content)
-                if not text:
-                    raise ValueError("Empty response from Claude")
-                parsed = _extract_json(text)
-                if parsed is None:
-                    raise ValueError("Could not parse JSON from Claude response")
-                summary, cards = _validate_cards(parsed)
-                logger.info("Claude produced %s qualifying trade card(s)", len(cards))
-                return {"market_summary": summary, "trade_cards": cards, "error": None}
+                return await self._analyze_once(
+                    system_prompt, user_content, config.CLAUDE_MODEL
+                )
+            except ClaudeRefusal as refusal:
+                # Retrying the same prompt on the same model would just refuse
+                # again, so spend the attempt on the fallback model instead.
+                logger.warning(
+                    "Claude refused the request for session %s: %s", session, refusal
+                )
+                return await self._fallback_after_refusal(
+                    system_prompt, user_content, session
+                )
             except Exception as exc:
                 logger.warning("Claude analysis attempt %s failed: %s", attempt, exc)
                 if attempt == 1:

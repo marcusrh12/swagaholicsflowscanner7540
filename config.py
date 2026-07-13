@@ -57,6 +57,7 @@ ENABLE_GITHUB_PAGES = True
 # Claude model
 # --------------------------------------------------------------------------- #
 CLAUDE_MODEL = "claude-fable-5"
+CLAUDE_FALLBACK_MODEL = "claude-opus-4-8"  # retried once on a fable-5 safety refusal
 CLAUDE_EFFORT = "medium"             # fable-5 adaptive-thinking effort ("low"/"medium"/"high"); "" to omit
 CLAUDE_MAX_TOKENS = 12000            # headroom over medium-effort output (~8k) so JSON never truncates
 CLAUDE_TIMEOUT_SECONDS = 180
