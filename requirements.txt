@@ -1,5 +1,5 @@
 # FlowScanner dependencies (pinned)
-anthropic==0.40.0
+anthropic==0.116.0
 aiohttp==3.10.5
 pandas==2.2.2
 numpy==1.26.4

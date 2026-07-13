@@ -1,7 +1,7 @@
 """
 Claude engine: send the scan payload to Claude and parse the trade-card output.
 
-Uses the official Anthropic SDK (AsyncAnthropic) with model claude-sonnet-4-6.
+Uses the official Anthropic SDK (AsyncAnthropic) with model claude-fable-5.
 On failure it retries once after a delay before logging the failure. The model
 response is parsed defensively into a validated list of trade cards, sorted by
 confidence tier then by number of confluence signals.
