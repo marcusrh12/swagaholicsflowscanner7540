@@ -94,6 +94,22 @@ EARNINGS_ROW_CAP = 4000               # if a chunk returns this many rows, it tr
 TARGET_MIN_TICKERS = 40               # desired post-filter universe size (floor)
 TARGET_MAX_TICKERS = 60               # desired post-filter universe size (cap)
 
+# --------------------------------------------------------------------------- #
+# Universe composition: a stable core + a rotating tail
+# --------------------------------------------------------------------------- #
+# Ranking purely by dollar volume is nearly ranking by market cap, so the scanned
+# list was the same ~60 mega-caps every session and the $1-50B band -- where a stock
+# can actually move enough to pay for a call -- was never looked at. The core keeps
+# continuity (streaks need names to recur); the tail brings discovery.
+UNIVERSE_CORE_SLOTS = 30              # top N by dollar volume: always watched
+UNIVERSE_ROTATE_SLOTS = 30            # top N by relative volume: actually moving today
+UNIVERSE_PRESCREEN_POOL = 300         # candidates we compute relative volume for
+MIN_DOLLAR_VOLUME = 100_000_000       # $/day floor for the tail -- options must be tradable
+MIN_RELVOL = 1.5                      # tail must trade >= 1.5x its own 20-day average
+
+RELVOL_LOOKBACK_BARS = 20             # baseline = mean volume of the prior 20 sessions
+RELVOL_FETCH_DAYS = 45                # short calendar window -- enough bars, cheap to fetch
+
 # Always pulled as macro context regardless of filters
 MACRO_TICKERS = ["SPY", "QQQ"]
 

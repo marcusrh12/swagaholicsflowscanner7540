@@ -364,6 +364,42 @@ class FMPClient:
 
         return w.tail(config.WEEKLY_LOOKBACK_WEEKS + 30)  # buffer to seed EMAs
 
+    async def relative_volume(self, symbol: str) -> Optional[float]:
+        """
+        Today's volume divided by its recent average -- "is this name actually doing
+        something today?".
+
+        This is the rotation signal for universe selection. Ranking by raw dollar
+        volume just ranks by market cap, and mega-cap dollar volume barely moves day
+        to day, so the scanned list was a fixed set of the same ~60 giants forever.
+        Relative volume is what surfaces the mid-cap breaking out on 5x its normal
+        turnover -- the setup this scanner exists to find.
+
+        Deliberately fetches a SHORT window (not the 700-bar frame used for
+        indicators): this runs across a wide pre-screen pool, and only the survivors
+        pay for the full history.
+        """
+        frm = dt.date.today() - dt.timedelta(days=config.RELVOL_FETCH_DAYS)
+        data = await self._get(
+            "historical-price-eod/full", {"symbol": symbol, "from": frm.isoformat()}
+        )
+        if not isinstance(data, list) or len(data) < config.RELVOL_LOOKBACK_BARS + 1:
+            return None
+        try:
+            df = pd.DataFrame(data)[["date", "volume"]].copy()
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date")
+            vols = df["volume"].astype(float)
+            today_vol = float(vols.iloc[-1])
+            # Average of the PRIOR bars -- excluding today, or today's own volume
+            # would dilute the very spike we're trying to detect.
+            baseline = float(vols.iloc[-(config.RELVOL_LOOKBACK_BARS + 1) : -1].mean())
+        except (KeyError, ValueError, IndexError):
+            return None
+        if not baseline or baseline <= 0:
+            return None
+        return round(today_vol / baseline, 2)
+
     async def get_ticker_data(self, symbol: str) -> Optional[dict]:
         """
         Fetch and compute the full FMP feature set for one symbol. Returns a dict

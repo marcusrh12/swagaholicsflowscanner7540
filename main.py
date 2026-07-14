@@ -188,13 +188,41 @@ def _compute_streaks(
 # --------------------------------------------------------------------------- #
 # Universe selection
 # --------------------------------------------------------------------------- #
-def _select_universe(screener_rows: list[dict], earnings_map: dict[str, str]) -> list[dict]:
+def _dollar_vol(row: dict) -> float:
+    try:
+        return float(row.get("price", 0)) * float(row.get("volume", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _select_universe(
+    fmp: FMPClient, screener_rows: list[dict], earnings_map: dict[str, str]
+) -> list[dict]:
     """
-    From raw screener rows: drop near-term earnings reporters, prioritize by
-    dollar-volume liquidity, and cap at the configured target size.
+    Build the scan universe as a STABLE CORE plus a ROTATING TAIL.
+
+    Ranking purely by dollar volume (the old behaviour) is very nearly ranking by
+    market cap: mega-cap dollar volume is stable day to day, so the scanned list was
+    a fixed set of the same ~60 giants every session, and the entire $1-50B band --
+    where a stock can actually move 15% in three weeks and make a call worth owning --
+    was screened in and then thrown away.
+
+    Pure relative-volume ranking would fix discovery but break the streak tracking:
+    streaks only mean something if a name can recur across sessions, and a fully
+    churning list makes that impossible. So:
+
+      * CORE   -- top N by dollar volume. The names you always want watched, and
+                  where day-over-day streaks accumulate.
+      * ROTATE -- top N by RELATIVE volume (today vs its own 20-day average) among
+                  liquid names. This is what surfaces the mid-cap breaking out on 5x
+                  its normal turnover.
+
+    Relative volume needs a volume history FMP's screener doesn't carry, so it is
+    computed only for a pre-screen pool (ranked by turnover, a zero-cost proxy for
+    unusual activity relative to size), not for all ~1,500 names.
     """
     today = dt.date.today()
-    filtered: list[dict] = []
+    eligible: list[dict] = []
     for r in screener_rows:
         sym = r.get("symbol")
         if not sym or sym in config.MACRO_TICKERS:
@@ -207,24 +235,59 @@ def _select_universe(screener_rows: list[dict], earnings_map: dict[str, str]) ->
                     continue  # exclude imminent earnings
             except ValueError:
                 pass
-        filtered.append(r)
+        eligible.append(r)
 
-    def _dollar_vol(row: dict) -> float:
-        try:
-            return float(row.get("price", 0)) * float(row.get("volume", 0))
-        except (TypeError, ValueError):
-            return 0.0
+    by_dollar = sorted(eligible, key=_dollar_vol, reverse=True)
+    core = by_dollar[: config.UNIVERSE_CORE_SLOTS]
+    core_syms = {r["symbol"] for r in core}
 
-    filtered.sort(key=_dollar_vol, reverse=True)
-    selected = filtered[: config.TARGET_MAX_TICKERS]
+    # Pre-screen pool for the rotating tail: the next most liquid names after the
+    # core. The pool selects for LIQUIDITY (a name whose options you can actually get
+    # filled on) and lets relative volume do the DISCOVERING. Ranking the pool itself
+    # by turnover instead pulls in perennially-churny micro-caps whose chains are too
+    # thin to trade -- they'd only be dropped later by the open-interest filter.
+    pool = [
+        r
+        for r in eligible
+        if r["symbol"] not in core_syms
+        and _dollar_vol(r) >= config.MIN_DOLLAR_VOLUME
+    ]
+    pool.sort(key=_dollar_vol, reverse=True)
+    pool = pool[: config.UNIVERSE_PRESCREEN_POOL]
 
+    relvols = await asyncio.gather(
+        *[fmp.relative_volume(r["symbol"]) for r in pool]
+    )
+    scored = [
+        (r, rv) for r, rv in zip(pool, relvols) if rv is not None and rv >= config.MIN_RELVOL
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    rotate = [r for r, _ in scored[: config.UNIVERSE_ROTATE_SLOTS]]
+
+    if rotate:
+        logger.info(
+            "Rotating tail (relvol): %s",
+            ", ".join(f"{r['symbol']}={rv}x" for r, rv in scored[: config.UNIVERSE_ROTATE_SLOTS]),
+        )
+    else:
+        logger.warning(
+            "No ticker cleared the %sx relative-volume floor; scanning the core only",
+            config.MIN_RELVOL,
+        )
+
+    selected = core + rotate
     if len(selected) < config.TARGET_MIN_TICKERS:
         logger.warning(
             "Post-filter universe is %s (< target floor %s); proceeding anyway",
             len(selected),
             config.TARGET_MIN_TICKERS,
         )
-    logger.info("Selected %s tickers for the scan", len(selected))
+    logger.info(
+        "Selected %s tickers (%s core by dollar volume + %s rotating by relative volume)",
+        len(selected),
+        len(core),
+        len(rotate),
+    )
     return selected
 
 
@@ -285,8 +348,9 @@ async def run_scan(session_name: str, force: bool = False) -> None:
         )
         macro_fmp = dict(zip(macro_tasks.keys(), macro_results))
 
-        # Build the tradable universe.
-        universe = _select_universe(screener_rows, earnings_map)
+        # Build the tradable universe (needs the client: the rotating tail is ranked
+        # on relative volume, which requires a volume history per candidate).
+        universe = await _select_universe(fmp, screener_rows, earnings_map)
         screener_by_symbol = {r["symbol"]: r for r in universe}
         symbols = list(screener_by_symbol.keys())
 
