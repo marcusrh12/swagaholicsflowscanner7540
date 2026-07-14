@@ -19,6 +19,7 @@ from anthropic import AsyncAnthropic
 
 import config
 from analysis import prompt_builder
+from data import pricing
 
 logger = logging.getLogger("flowscanner.claude")
 
@@ -252,15 +253,46 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
             )
             continue
 
-        # 3. Reward/risk floor. A card whose rr_ratio didn't parse to a number is a
-        # card with no stated edge -- don't publish it with a blank R/R.
+        # 3. Reward/risk on the UNDERLYING -- this measures the quality of the thesis.
+        # A card whose rr_ratio didn't parse is a card with no stated edge.
         rr = _coerce_number(c.get("rr_ratio"))
         if rr is None or rr < config.MIN_RR_RATIO:
             logger.warning(
-                "%s: dropping card -- reward/risk %s below the %.1f floor",
+                "%s: dropping card -- underlying reward/risk %s below the %.1f floor",
                 ticker,
                 "unparseable" if rr is None else f"{rr:.2f}",
                 config.MIN_RR_RATIO,
+            )
+            continue
+
+        # 4. Reward/risk on the OPTION -- this measures the quality of the TRADE, and
+        # it is the one that decides whether the card ships. You are buying a call,
+        # not the stock: your risk is the premium (less whatever the option is still
+        # worth at the stop), your reward is non-linear in the underlying, and theta
+        # is invisible to a price-distance ratio. A 2.4 on the chart can be a losing
+        # option when the move takes five weeks instead of two.
+        stop = _coerce_number(c.get("stop_level"))
+        opt = pricing.option_reward_risk(
+            strike=contract.get("strike"),
+            ask=contract.get("ask"),
+            iv=contract.get("iv"),
+            dte=contract.get("dte"),
+            price_target=target,
+            stop_level=stop,
+        ) if (target is not None and stop is not None) else None
+
+        if opt is None:
+            logger.warning(
+                "%s: dropping card -- could not model the option's reward/risk "
+                "(target=%s stop=%s contract=%s)",
+                ticker, target, stop, contract,
+            )
+            continue
+        if opt["option_rr"] < config.MIN_OPTION_RR:
+            logger.warning(
+                "%s: dropping card -- option reward/risk %.2f below the %.1f floor "
+                "(underlying R/R looked like %.2f)",
+                ticker, opt["option_rr"], config.MIN_OPTION_RR, rr,
             )
             continue
 
@@ -274,9 +306,13 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
                 "thesis": str(c.get("thesis", "")).strip(),
                 "contract": contract,
                 "entry_reference": _coerce_number(c.get("entry_reference")),
-                "stop_level": _coerce_number(c.get("stop_level")),
+                "stop_level": stop,
                 "price_target": target,
-                "rr_ratio": rr,
+                "rr_ratio": rr,          # on the underlying: thesis quality
+                "option_rr": opt["option_rr"],  # on the contract: trade quality
+                "value_at_target": opt["value_at_target"],
+                "value_at_stop": opt["value_at_stop"],
+                "premium_at_risk": opt["premium_at_risk"],
                 "iv_assessment": str(c.get("iv_assessment", "")).strip(),
             }
         )

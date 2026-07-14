@@ -170,8 +170,20 @@ RISK_FREE_RATE = 0.04
 MIN_CONFLUENCE_COUNT = 4
 CONFLUENCE_CATEGORY_COUNT = 7         # kept in sync with the rubric in prompt_builder
 
-# Reward/risk floor, enforced in claude_engine (not just asked for in the prompt).
+# Reward/risk floors, enforced in claude_engine (not just asked for in the prompt).
+# MIN_RR_RATIO is measured on the UNDERLYING -- it judges the thesis.
+# MIN_OPTION_RR is measured on the CONTRACT (Black-Scholes, data/pricing.py) -- it
+# judges the trade, and is the gate that actually matters when you're buying calls:
+# risk is the premium you cannot recover at the stop, reward is the modeled value at
+# the target, and theta is priced in. A great chart can still be a bad call.
 MIN_RR_RATIO = 1.5
+MIN_OPTION_RR = 1.5
+
+# The thesis is assumed to play out partway through the contract's life rather than
+# on expiration day -- a swing that needs every last day to work is not the trade you
+# thought you took, and pricing at expiry would throw away the time value you still
+# hold when the target prints. 0.5 = the move completes at the halfway mark.
+OPTION_RR_TIME_FRACTION = 0.5
 
 # Expiration selection window (days-to-expiration) for recommended contracts.
 MIN_DTE = 7                          # hard floor: never recommend an expiration closer than this

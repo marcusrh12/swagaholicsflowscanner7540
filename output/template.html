@@ -171,8 +171,11 @@
             <div class="v">{{ "%.2f"|format(c.entry_reference) if c.entry_reference is not none else "n/a" }}</div>
           </div>
           <div class="metric">
-            <div class="k">R / R</div>
-            <div class="v rr">{{ "%.2f"|format(c.rr_ratio) if c.rr_ratio is not none else "n/a" }}</div>
+            <div class="k">Option R/R</div>
+            <div class="v rr">
+              {{- "%.2f"|format(c.option_rr) if c.option_rr is not none else "n/a" -}}
+              {%- if c.rr_ratio is not none %} <span style="font-size:11px;color:var(--muted)">(stock {{ "%.1f"|format(c.rr_ratio) }})</span>{% endif -%}
+            </div>
           </div>
           <div class="metric">
             <div class="k">Target</div>
@@ -189,6 +192,15 @@
           <li>{{ s }}</li>
           {% endfor %}
         </ul>
+
+        {% if c.option_rr is not none %}
+        <div class="iv">
+          Contract modelled at {{ "%.0f"|format(c.premium_at_risk * 100) }} at risk per contract
+          &middot; worth ~{{ "%.2f"|format(c.value_at_target) }} at target,
+          ~{{ "%.2f"|format(c.value_at_stop) }} at stop
+          <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+        </div>
+        {% endif %}
 
         {% if c.iv_assessment %}
         <div class="iv">IV: {{ c.iv_assessment }}</div>

@@ -130,7 +130,17 @@ RULES:
 - RR_RATIO: compute it from the levels you actually chose --
   (price_target - entry_reference) / (entry_reference - stop_level). Do not state a
   reward/risk you have not derived from those two structural levels. If the result is
-  below 1.5, the setup is not worth the premium: drop the card.
+  below {config.MIN_RR_RATIO}, the setup is not worth the premium: drop the card.
+- THE OPTION'S REWARD/RISK IS THE REAL GATE, AND IT IS COMPUTED FOR YOU. After you
+  return a card, the contract is priced (Black-Scholes) at your `price_target` and at
+  your `stop_level`, midway through its life. Reward is its modelled value at the
+  target minus the `ask`; risk is the `ask` minus its value at the stop. If that ratio
+  is under {config.MIN_OPTION_RR}, THE CARD IS DISCARDED -- however good the chart is.
+  You cannot see the result, so build for it: a target only just past `breakeven`, a
+  stop so wide the premium is nearly all lost, a far-OTM strike needing a huge move,
+  or a short `dte` that theta will eat, will all fail this gate. Prefer a target that
+  clears breakeven with room, a stop that is structurally tight, and a delta in the
+  0.45-0.70 band where the contract actually participates in the move.
 
 OUTPUT CONTRACT (STRICT):
 Return ONLY a single JSON object, no prose, no markdown fences. Schema:

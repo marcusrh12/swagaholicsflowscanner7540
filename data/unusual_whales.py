@@ -18,13 +18,13 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-import math
 import re
 from typing import Any, Optional
 
 import aiohttp
 
 import config
+from data import pricing
 
 logger = logging.getLogger("flowscanner.uw")
 
@@ -61,26 +61,9 @@ def _decode_occ(symbol: Any) -> Optional[dict]:
     }
 
 
-def _norm_cdf(x: float) -> float:
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
-
-def _call_delta(spot: float, strike: float, dte: int, iv: float) -> Optional[float]:
-    """
-    Black-Scholes call delta = N(d1). Dividends are ignored, which biases delta
-    slightly high on payers -- immaterial next to a delta that was previously
-    invented by the model out of nothing.
-    """
-    if not (spot > 0 and strike > 0 and dte > 0 and iv and iv > 0):
-        return None
-    t = dte / 365.0
-    try:
-        d1 = (math.log(spot / strike) + (config.RISK_FREE_RATE + 0.5 * iv * iv) * t) / (
-            iv * math.sqrt(t)
-        )
-    except (ValueError, ZeroDivisionError):
-        return None
-    return round(_norm_cdf(d1), 3)
+# Greeks/pricing live in data/pricing.py so the chain builder and the trade-card
+# validator price the same contract the same way.
+_call_delta = pricing.call_delta
 
 
 def _first(d: dict, *keys, default=None):
