@@ -104,6 +104,7 @@ def build_ticker_record(
         "avg_volume": (screener_row or {}).get("volume"),
         "daily": fmp_data["daily"],
         "weekly": fmp_data["weekly"],
+        "structure": fmp_data.get("structure", {}),
         "hourly": fmp_data["hourly"],
         "relative_strength": rs,
         "options": {

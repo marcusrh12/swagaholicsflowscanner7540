@@ -59,7 +59,11 @@ ENABLE_GITHUB_PAGES = True
 CLAUDE_MODEL = "claude-fable-5"
 CLAUDE_FALLBACK_MODEL = "claude-opus-4-8"  # retried once on a fable-5 safety refusal
 CLAUDE_EFFORT = "medium"             # fable-5 adaptive-thinking effort ("low"/"medium"/"high"); "" to omit
-CLAUDE_MAX_TOKENS = 12000            # headroom over medium-effort output (~8k) so JSON never truncates
+# max_tokens covers thinking AND the JSON output. Medium effort spends ~8-9k on
+# thinking alone; the seven-category rubric then needs ~4-6k for the cards. 12000
+# truncated the JSON mid-card (stop_reason=max_tokens), which surfaces as an
+# unparseable response, so keep real headroom above thinking + output.
+CLAUDE_MAX_TOKENS = 24000
 CLAUDE_TIMEOUT_SECONDS = 180
 CLAUDE_RETRY_DELAY_SECONDS = 10  # retry once after this delay on failure
 
@@ -91,6 +95,26 @@ WEEKLY_LOOKBACK_WEEKS = 52
 HOURLY_LOOKBACK_DAYS = 10
 
 # --------------------------------------------------------------------------- #
+# Chart-structure parameters (data/structure.py)
+# --------------------------------------------------------------------------- #
+# Pivot width = bars required either side of a swing point to confirm it. Wider
+# = fewer, more meaningful pivots. Weekly bars are coarser, so they need less.
+PIVOT_WIDTH_DAILY = 3
+PIVOT_WIDTH_WEEKLY = 2
+
+# How far back structure is read. Deliberately shorter than the EMA lookbacks:
+# a swing trader cares about the recent sequence, not the year-old one.
+STRUCTURE_LOOKBACK_DAILY = 90         # bars (~4.5 months)
+STRUCTURE_LOOKBACK_WEEKLY = 52        # bars (~1 year)
+
+# A range is the longest recent window whose high/low width stays under this.
+# Tighten to demand cleaner bases; loosen to catch wider ones.
+CONSOLIDATION_MAX_WIDTH_PCT_DAILY = 8.0
+CONSOLIDATION_MAX_WIDTH_PCT_WEEKLY = 15.0
+CONSOLIDATION_MIN_BARS_DAILY = 8      # a range needs at least this many bars
+CONSOLIDATION_MIN_BARS_WEEKLY = 4
+
+# --------------------------------------------------------------------------- #
 # Options / flow parameters
 # --------------------------------------------------------------------------- #
 MIN_FLOW_PREMIUM = 50_000             # unusual flow alerts must exceed this premium ($)
@@ -100,7 +124,11 @@ TOP_OI_STRIKES = 5                    # number of top open-interest strikes to s
 # --------------------------------------------------------------------------- #
 # Analysis parameters
 # --------------------------------------------------------------------------- #
-MIN_CONFLUENCE_COUNT = 3              # minimum confluence points to generate a trade card
+# Minimum confluence points to generate a trade card. There are now seven
+# categories (market structure was added), so 3 would be a looser gate than the
+# 3-of-6 it replaced; 4-of-7 keeps the bar where it was.
+MIN_CONFLUENCE_COUNT = 4
+CONFLUENCE_CATEGORY_COUNT = 7         # kept in sync with the rubric in prompt_builder
 
 # Expiration selection window (days-to-expiration) for recommended contracts.
 MIN_DTE = 7                          # hard floor: never recommend an expiration closer than this
@@ -108,10 +136,17 @@ MAX_DTE = 56                         # upper bound of the swing DTE window
 
 # --------------------------------------------------------------------------- #
 # Scan session times (local machine time, 24h "HH:MM")
+#
+# Only used by the local scheduler daemon (scheduler.py). The scans that actually
+# run are scheduled in .github/workflows/scan.yml, pinned to Eastern time — keep
+# the two in sync. The postmarket scan was dropped: the market is closed, so its
+# cards could not be acted on until the next open, by which point the premarket
+# scan supersedes them.
 # --------------------------------------------------------------------------- #
 SCAN_SESSIONS = {
-    "morning": "09:00",    # pre-open: captures the coming day + overnight / prior-close moves
-    "afternoon": "14:00",  # post-lunch: re-checks theses after the day has played out
+    "premarket": "09:00",  # the plan: 30 min before the bell, off yesterday's completed bar
+    "pulse": "14:00",      # did it hold: FMP's daily bar updates intraday, so this re-reads
+                           # today's live bar past the lunch chop, with time left to act
 }
 
 # --------------------------------------------------------------------------- #

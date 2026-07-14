@@ -6,6 +6,8 @@ Responsibilities:
   * Pull daily OHLCV (and resample to weekly) plus intraday 1-hour candles.
   * Compute technical indicators locally from OHLCV: RSI(14) daily & weekly,
     MACD(12/26/9) daily, ATR(14) daily, EMA 8/21/50/200 daily.
+  * Derive daily & weekly swing structure (pivots, trend sequence, consolidation,
+    support/resistance) via data.structure.
   * Pull the earnings calendar and build a symbol -> nearest-upcoming-date map.
 
 Indicators are computed locally from FMP OHLCV rather than relying on FMP's
@@ -28,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 import config
+from data import structure
 
 logger = logging.getLogger("flowscanner.fmp")
 
@@ -365,6 +368,9 @@ class FMPClient:
                         and w_close.iloc[-1] > w_ema21.iloc[-1]
                     ),
                 },
+                # Swing structure from highs/lows (see data/structure.py). Uses the
+                # frames already in hand -- no extra API calls.
+                "structure": structure.build(daily, weekly),
                 "hourly": {
                     "last_close": _round(last_hour_close),
                     "bars": int(len(hourly)) if hourly is not None else 0,

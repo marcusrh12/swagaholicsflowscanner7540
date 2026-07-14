@@ -1,7 +1,7 @@
 """
 Scheduler for FlowScanner.
 
-Two ways to run the three daily sessions:
+Two ways to run the two daily sessions:
 
   1. OS scheduler (recommended on Windows): configure Windows Task Scheduler to
      run `python main.py --run now` at each session time. See README.md.

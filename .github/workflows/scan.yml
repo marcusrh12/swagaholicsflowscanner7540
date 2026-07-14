@@ -1,10 +1,21 @@
 name: FlowScanner Scan
 
+# Two scans per trading day, both pinned to EASTERN time:
+#   premarket 09:00 ET -- the plan, 30 minutes before the bell
+#   pulse     14:00 ET -- did it hold? FMP's daily bar updates intraday, so this
+#                         re-reads EMAs/RSI/structure against today's live bar,
+#                         past the lunch chop, with time left to act before close.
+#
+# GitHub cron is UTC and does NOT follow DST, so each session is scheduled at BOTH
+# its EDT (UTC-4) and EST (UTC-5) offset. The guard step below runs the scan only
+# when the *Eastern* clock actually reads 09 or 14, and skips the other firing.
+# Without this the whole schedule silently slid an hour earlier every November.
 on:
   schedule:
-    - cron: '0 12 * * 1-5'   # 8:00 AM ET (EDT) premarket, weekdays
-    - cron: '30 16 * * 1-5'  # 12:30 PM ET (EDT) midday, weekdays
-    - cron: '30 20 * * 1-5'  # 4:30 PM ET (EDT) postmarket, weekdays
+    - cron: '0 13 * * 1-5'  # 09:00 ET while EDT
+    - cron: '0 14 * * 1-5'  # 09:00 ET while EST
+    - cron: '0 18 * * 1-5'  # 14:00 ET while EDT
+    - cron: '0 19 * * 1-5'  # 14:00 ET while EST
   workflow_dispatch:
     inputs:
       session_type:
@@ -25,22 +36,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo (full history)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
+      # First step, before any checkout or install: a firing at the wrong Eastern
+      # hour (the DST twin of the real one) exits here having cost nothing.
       - name: Determine session type
         id: session
         env:
@@ -49,22 +46,46 @@ jobs:
           if [ -n "$DISPATCH_SESSION" ]; then
             session="$DISPATCH_SESSION"
           else
-            case "${{ github.event.schedule }}" in
-              '0 12 * * 1-5')  session=premarket ;;
-              '30 16 * * 1-5') session=midday ;;
-              '30 20 * * 1-5') session=postmarket ;;
-              *)               session=manual ;;
+            # Derive from the real Eastern clock, not the UTC cron line, so the
+            # session is correct in both EDT and EST.
+            et_hour=$(TZ=America/New_York date +%H)
+            case "$et_hour" in
+              09) session=premarket ;;
+              14) session=pulse ;;
+              *)  session=skip ;;
             esac
+            echo "Eastern hour is $et_hour -> session '$session'"
           fi
           echo "session_type=$session" >> "$GITHUB_OUTPUT"
           echo "Session type: $session"
 
+      - name: Checkout repo (full history)
+        if: steps.session.outputs.session_type != 'skip'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        if: steps.session.outputs.session_type != 'skip'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.session.outputs.session_type != 'skip'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       # The runner has no persistent disk. output/history/ lives in the repo, so
       # pull it before the scan — main.py reads it from local disk unchanged.
       - name: Pull latest history from the repo
+        if: steps.session.outputs.session_type != 'skip'
         run: git pull --rebase --autostash origin ${{ github.ref_name }}
 
       - name: Run scan
+        if: steps.session.outputs.session_type != 'skip'
         env:
           SESSION_TYPE: ${{ steps.session.outputs.session_type }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
@@ -79,6 +100,7 @@ jobs:
         run: python main.py --run now
 
       - name: Commit and push scan output
+        if: steps.session.outputs.session_type != 'skip'
         env:
           SESSION_TYPE: ${{ steps.session.outputs.session_type }}
         run: |

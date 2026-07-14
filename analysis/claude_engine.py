@@ -35,8 +35,44 @@ class ClaudeRefusal(Exception):
         super().__init__(f"{model} refused the request{detail}")
 
 
+def _balanced_spans(text: str):
+    """
+    Yield every balanced top-level {...} span, brace-counting while ignoring braces
+    inside JSON strings (and escaped characters within them).
+
+    A naive find("{")..rfind("}") slice breaks whenever the model wraps the object
+    in prose that itself contains a brace -- it swallows the trailing prose and the
+    parse fails on valid output. Counting braces properly is what makes the parse
+    robust to a stray sentence before or after the JSON.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    yield text[start : i + 1]
+
+
 def _extract_json(text: str) -> Optional[dict]:
-    """Pull the first top-level JSON object out of the model text."""
+    """Pull the trade-card JSON object out of the model text."""
     text = text.strip()
     # Strip accidental markdown fences.
     if text.startswith("```"):
@@ -46,14 +82,31 @@ def _extract_json(text: str) -> Optional[dict]:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Fallback: locate the outermost {...} span.
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
+
+    # Fall back to balanced spans, preferring one that actually looks like the
+    # contract -- the model may emit a small stray object alongside the real one.
+    candidates = []
+    for span in _balanced_spans(text):
         try:
-            return json.loads(text[start : end + 1])
+            obj = json.loads(span)
         except json.JSONDecodeError:
-            logger.error("Failed to parse JSON from Claude response span")
+            continue
+        if isinstance(obj, dict):
+            candidates.append(obj)
+    for obj in candidates:
+        if "trade_cards" in obj or "market_summary" in obj:
+            return obj
+    if candidates:
+        return candidates[0]
+
+    # Nothing parsed: log enough of the payload to actually diagnose it next time
+    # rather than retrying blind.
+    logger.error(
+        "Failed to parse JSON from Claude response (%s chars). Head: %r ... Tail: %r",
+        len(text),
+        text[:300],
+        text[-300:],
+    )
     return None
 
 
@@ -152,6 +205,21 @@ class ClaudeEngine:
         if getattr(message, "stop_reason", None) == "refusal":
             details = getattr(message, "stop_details", None)
             raise ClaudeRefusal(model, getattr(details, "category", None))
+
+        # Truncation must be named, not left to surface downstream as "unparseable
+        # JSON": max_tokens covers thinking + output, so a rubric or payload that
+        # grows can silently starve the JSON and produce a half-written card.
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            usage = getattr(message, "usage", None)
+            thinking = getattr(
+                getattr(usage, "output_tokens_details", None), "thinking_tokens", None
+            )
+            logger.error(
+                "Claude hit max_tokens (%s): %s thinking tokens left too little room "
+                "for the JSON. Raise config.CLAUDE_MAX_TOKENS or lower CLAUDE_EFFORT.",
+                config.CLAUDE_MAX_TOKENS,
+                thinking,
+            )
 
         # Concatenate all text blocks.
         parts = [b.text for b in message.content if getattr(b, "type", None) == "text"]
