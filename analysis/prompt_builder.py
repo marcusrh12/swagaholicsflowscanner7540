@@ -23,17 +23,34 @@ swing setups that favor buying CALL options, using multi-confluence analysis.
 For EACH ticker, evaluate these seven confluence categories and decide whether each
 one fires (is supportive of a bullish swing):
 
-1. TREND ALIGNMENT   - daily & weekly EMA structure (8/21/50/200), price vs EMAs,
-                       weekly trend.
-2. MOMENTUM          - daily & weekly RSI(14), MACD (line/signal/histogram).
+1. TREND ALIGNMENT   - DAILY EMA structure (`daily.ema8/21/50/200`, `ema_stack_bullish`,
+                       `price_above_ema200`) plus the WEEKLY read, which is only
+                       `weekly.ema8`, `weekly.ema21`, `weekly.above_ema21` and
+                       `weekly.close`. There is NO weekly ema50/ema200 -- do not claim
+                       one. Any of these may be null when history is too short; null
+                       means UNKNOWN, not bearish.
+2. MOMENTUM          - `daily.rsi14` and `weekly.rsi14`, plus MACD, which is DAILY
+                       ONLY (`daily.macd`, `macd_signal`, `macd_hist`). There is no
+                       weekly MACD -- do not claim one.
 3. VOLATILITY SETUP  - IV rank (prefer cheap IV for entry), ATR-based range and
                        room to the target.
 4. OPTIONS MARKET    - IV-rank favorability for buying premium, put/call ratio
-                       skew (lower is more bullish), open-interest clustering.
-5. SMART MONEY FLOW  - unusual bullish flow alerts, aggregate call premium size,
-                       directionality of the flow.
+                       skew (lower is more bullish), open-interest clustering (`top_oi`).
+5. SMART MONEY FLOW  - Judge DIRECTION, not size. `flow_alerts` are split by side:
+                       `sentiment` is derived from whether the premium traded on the
+                       ASK (bought) or the BID (sold). Calls BOUGHT are bullish; calls
+                       SOLD are a headwind (someone is capping upside); puts BOUGHT are
+                       bearish. The number that matters is `net_call_premium` (bought
+                       minus sold call premium): if it is NEGATIVE, institutional call
+                       flow was net SELLING and this category MUST NOT fire, however
+                       large the gross premium. Cross-check `bullish_premium` vs
+                       `bearish_premium` (UW's own day aggregates). If
+                       `flow_available` is false the flow fetch FAILED -- treat the
+                       category as unknown and do not fire it; do not read it as "no
+                       institutional interest".
 6. MACRO ALIGNMENT   - SPY trend, VIX regime (low/normal = supportive; high =
-                       headwind), relative strength vs SPY.
+                       headwind; "unknown" means the VIX fetch failed -- treat as
+                       neutral, do not count it as supportive), relative strength vs SPY.
 7. MARKET STRUCTURE  - the `structure` block (daily + weekly), derived from swing
                        highs/lows rather than closes. It fires when price action is
                        constructive: higher highs AND higher lows on the daily, a
@@ -58,20 +75,38 @@ RULES:
 - Only produce a trade card if AT LEAST {config.MIN_CONFLUENCE_COUNT} categories fire.
 - Confidence tier is HIGH or MEDIUM only. If a setup is low confidence, DROP IT
   entirely (do not emit a card).
-- Tickers with earnings inside {config.EARNINGS_EXCLUSION_DAYS} days have already
-  been filtered out, but if any earnings risk is present, factor it into confidence.
+- EARNINGS. Tickers with a KNOWN earnings date inside {config.EARNINGS_EXCLUSION_DAYS}
+  days are filtered out upstream, but the calendar has gaps: a null
+  `earnings.days_to_earnings` means the date is UNKNOWN, not that the ticker is safe.
+  Never treat null as "no earnings risk".
+  Whatever the filter did, YOU must check the contract you are recommending: if
+  `earnings.days_to_earnings` is not null and is LESS than the chosen candidate's
+  `dte`, the option is held THROUGH an earnings report. That is a binary gap risk
+  which no technical setup survives reliably -- either pick a candidate expiring
+  before the report, or drop the ticker. State this explicitly when it applies.
 - Be selective. It is correct to return few or even zero cards on a weak tape.
-- Recommend realistic contracts. For the expiration: Select the expiration that
-  best fits the setup's target distance and momentum character within a {config.MIN_DTE}
-  to {config.MAX_DTE} day window. Read `structure.daily` to make this call: a tight
-  consolidation (`in_consolidation` true, small `range_width_pct`) breaking out to a
-  near-term target warrants 2-3 weeks. A large measured move -- a wide range, or a
-  distant `nearest_resistance` -- with strong institutional flow and clear sector
-  leadership warrants 4-6 weeks. State your DTE reasoning explicitly in the
-  contract selection. Hard floor is {config.MIN_DTE} days -- never recommend an
-  expiration closer than that regardless of setup quality. Choose a strike
-  near-the-money to slightly OTM, and a delta range to target (e.g. "0.55-0.65").
-  Prefer strikes near meaningful open-interest clusters.
+- CONTRACT SELECTION -- PICK ONE, DO NOT INVENT ONE. Each ticker carries
+  `options.call_candidates`: the REAL, listed calls from the live option chain,
+  already filtered to the {config.MIN_DTE}-{config.MAX_DTE} day window and to strikes near the
+  money. Each entry has its actual `strike`, `expiry`, `dte`, `bid`/`ask`/`mid`,
+  per-contract `iv`, `open_interest`, `spread_pct`, `delta` (Black-Scholes, from the
+  live chain) and `breakeven` (strike + ask). You MUST copy `strike` and `expiry`
+  verbatim from ONE entry in that list, and report that entry's `delta` and `ask` as
+  given. NEVER emit a strike, expiration or delta that does not appear in
+  `call_candidates` -- an invented contract may not exist and cannot be traded.
+  Choose among candidates on: delta (0.45-0.70 is the useful band -- real directional
+  exposure without paying up for deep ITM), open interest (higher fills better),
+  `spread_pct` (a wide spread eats the edge), and DTE fit. Read `structure.daily` for
+  the DTE call: a tight consolidation (`in_consolidation` true, small
+  `range_width_pct`) breaking to a near-term target warrants 2-3 weeks; a large
+  measured move -- a wide range, or a distant `nearest_resistance` -- with strong
+  institutional flow warrants 4-6 weeks. State your DTE reasoning briefly.
+  If `call_candidates` is EMPTY, DROP THE TICKER. Do not emit a card with a
+  fabricated contract.
+- CHECK THE BREAKEVEN. `breakeven` is what the underlying must reach by expiry just
+  to return the premium paid. If your `price_target` is at or below the chosen
+  contract's `breakeven`, the trade loses money even when the thesis plays out --
+  pick a nearer strike or drop the setup.
 - STREAK / REPEAT TICKERS: For any ticker that appears in the REPEAT TICKER HISTORY
   block (provided with the payload), include a streak note in the thesis stating how
   many consecutive sessions it has appeared and whether confluence is strengthening,
@@ -111,14 +146,17 @@ Return ONLY a single JSON object, no prose, no markdown fences. Schema:
       "confluence_signals": ["Trend alignment: ...", "Momentum: ...", ...],
       "thesis": "2-3 sentence thesis",
       "contract": {{
-        "expiration": "YYYY-MM-DD or descriptive (e.g. '4-6 weeks out')",
-        "strike": <number>,
-        "delta_target": "e.g. 0.55-0.65"
+        "expiration": "YYYY-MM-DD, copied verbatim from the chosen candidate's `expiry`",
+        "strike": <number, copied verbatim from the chosen candidate's `strike`>,
+        "delta": <number, the chosen candidate's `delta` as given>,
+        "ask": <number, the chosen candidate's `ask` as given -- the premium per share>,
+        "breakeven": <number, the chosen candidate's `breakeven` as given>,
+        "open_interest": <integer, the chosen candidate's `open_interest` as given>
       }},
       "entry_reference": <current price used as entry reference, number>,
       "stop_level": <price where thesis is structurally invalidated, number>,
       "price_target": <technically-derived target, number>,
-      "rr_ratio": <estimated reward/risk as a number, e.g. 2.4>,
+      "rr_ratio": <reward/risk on the UNDERLYING, from your target and stop, e.g. 2.4>,
       "iv_assessment": "is IV cheap or expensive for entry, and why (1 sentence)"
     }}
   ]

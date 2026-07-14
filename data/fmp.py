@@ -39,18 +39,42 @@ logger = logging.getLogger("flowscanner.fmp")
 # Indicator helpers (pure pandas / numpy)
 # --------------------------------------------------------------------------- #
 def _ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
+    """
+    EMA that refuses to invent a value it cannot support.
+
+    `ewm(adjust=False)` seeds the recursion from the FIRST observation, so without
+    min_periods it emits a plausible-looking number from bar 1 -- a 40-bar IPO would
+    report an "EMA200". That number is almost entirely the seed bar, and it fed the
+    scanner's load-bearing trend gate (price_above_ema200 / ema_stack_bullish).
+    min_periods=span makes an unsupported EMA NaN, which _round() turns into None.
+    """
+    return series.ewm(span=span, adjust=False, min_periods=span).mean()
 
 
 def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Wilder's RSI. Zero average loss means there were NO down bars -- RSI is 100
+    (maximally overbought), not 50. The previous code divided by NaN to dodge the
+    zero-division and then swallowed the NaN with fillna(50.0), silently laundering
+    the single most overbought reading in the scanner into "neutral" -- precisely
+    the reading a call scanner most needs to see. (The mirror case, zero gain, gives
+    rs=0 -> RSI 0, which was already correct.)
+    """
     delta = series.diff()
     gain = delta.clip(lower=0.0)
     loss = -delta.clip(upper=0.0)
     avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0.0, np.nan)
+
+    rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50.0)
+    # avg_loss == 0 -> rs = inf -> rsi = 100. Make that explicit rather than relying
+    # on inf arithmetic, and only where there is genuinely a gain to speak of.
+    zero_loss = (avg_loss == 0) & avg_gain.notna()
+    rsi = rsi.mask(zero_loss & (avg_gain > 0), 100.0)
+    rsi = rsi.mask(zero_loss & (avg_gain == 0), 50.0)  # flat line: neutral is right
+    # Warm-up bars stay NaN -> _round() -> None. Never a fabricated 50.
+    return rsi
 
 
 def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
@@ -163,31 +187,74 @@ class FMPClient:
         Map symbol -> nearest upcoming earnings date (ISO string) within the
         lookahead window. Used both to exclude near-term reporters and to attach
         the nearest earnings date per ticker.
+
+        FETCHED IN CHUNKS, and that is load-bearing. FMP caps this endpoint at 4000
+        rows and truncates from the NEAR end: a single 90-day request came back
+        holding only days 29-90, so every company reporting in the next four weeks
+        was missing. The earnings-exclusion filter reads this map, so it could never
+        exclude anybody -- AAPL, JPM, GS, MSFT and TSLA all sailed through with
+        `days_to_earnings: null` days before reporting. Chunking keeps each response
+        far below the cap so the near dates actually arrive.
         """
         today = dt.date.today()
-        to = today + dt.timedelta(days=config.EARNINGS_LOOKAHEAD_DAYS)
-        rows = await self._get(
-            "earnings-calendar",
-            {"from": today.isoformat(), "to": to.isoformat()},
-        )
         mapping: dict[str, str] = {}
-        if not isinstance(rows, list):
-            logger.warning("Earnings calendar unavailable; proceeding without it")
+        chunk = max(1, config.EARNINGS_CHUNK_DAYS)
+        any_ok = False
+
+        for start_offset in range(0, config.EARNINGS_LOOKAHEAD_DAYS, chunk):
+            frm = today + dt.timedelta(days=start_offset)
+            to = min(
+                frm + dt.timedelta(days=chunk - 1),
+                today + dt.timedelta(days=config.EARNINGS_LOOKAHEAD_DAYS),
+            )
+            rows = await self._get(
+                "earnings-calendar", {"from": frm.isoformat(), "to": to.isoformat()}
+            )
+            if not isinstance(rows, list):
+                logger.warning("Earnings calendar chunk %s..%s unavailable", frm, to)
+                continue
+            any_ok = True
+            if len(rows) >= config.EARNINGS_ROW_CAP:
+                # Still truncated -> near dates may be missing again. Shout: silently
+                # trusting this map is what let earnings risk through in the first place.
+                logger.error(
+                    "Earnings chunk %s..%s hit the %s-row cap (%s rows) -- dates are "
+                    "being dropped. Lower config.EARNINGS_CHUNK_DAYS.",
+                    frm, to, config.EARNINGS_ROW_CAP, len(rows),
+                )
+            for r in rows:
+                sym = r.get("symbol")
+                date_str = r.get("date")
+                if not sym or not date_str:
+                    continue
+                try:
+                    d = dt.date.fromisoformat(date_str[:10])
+                except ValueError:
+                    continue
+                if d < today:
+                    continue
+                iso = d.isoformat()
+                if sym not in mapping or iso < mapping[sym]:
+                    mapping[sym] = iso
+
+        if not any_ok:
+            logger.error(
+                "Earnings calendar completely unavailable -- the earnings-exclusion "
+                "filter is INACTIVE for this scan"
+            )
             return mapping
-        for r in rows:
-            sym = r.get("symbol")
-            date_str = r.get("date")
-            if not sym or not date_str:
-                continue
-            try:
-                d = dt.date.fromisoformat(date_str[:10])
-            except ValueError:
-                continue
-            if d < today:
-                continue
-            if sym not in mapping or date_str[:10] < mapping[sym]:
-                mapping[sym] = d.isoformat()
-        logger.info("Earnings calendar loaded for %s symbols", len(mapping))
+
+        near = sum(
+            1
+            for v in mapping.values()
+            if (dt.date.fromisoformat(v) - today).days <= config.EARNINGS_EXCLUSION_DAYS
+        )
+        logger.info(
+            "Earnings calendar loaded for %s symbols (%s reporting within %s days)",
+            len(mapping),
+            near,
+            config.EARNINGS_EXCLUSION_DAYS,
+        )
         return mapping
 
     # ---------------------------------------------------------------- #
@@ -283,6 +350,18 @@ class FMPClient:
         )
         # Convert the weekly PeriodIndex back to the week-ending timestamp.
         w.index = w.index.to_timestamp(how="end").normalize()
+
+        # DROP THE IN-PROGRESS WEEK. groupby buckets the current partial week into a
+        # group of its own and aggregates it as though it had closed -- on a Monday
+        # scan the newest "weekly bar" is a single day, and its label is dated to the
+        # coming Friday (a date in the future). Weekly RSI / EMA21 / above_ema21 were
+        # being read off that stub and handed to the model as a *weekly* trend read,
+        # so one soft Monday morning could flip the weekly trend. A week is only
+        # complete once the daily data reaches its Friday.
+        last_daily = s.index[-1].normalize()
+        if len(w) and w.index[-1] > last_daily:
+            w = w.iloc[:-1]
+
         return w.tail(config.WEEKLY_LOOKBACK_WEEKS + 30)  # buffer to seed EMAs
 
     async def get_ticker_data(self, symbol: str) -> Optional[dict]:
@@ -317,9 +396,13 @@ class FMPClient:
                 float(ema50.iloc[-1]),
                 float(ema200.iloc[-1]),
             )
-            # market-structure booleans
-            ema_stack_bullish = e8 > e21 > e50 > e200
-            price_above_200 = last_close > e200
+            # Market-structure booleans. An EMA with too little history is NaN (see
+            # _ema), and every comparison against NaN is False -- which would report
+            # "not above the 200 EMA" for a ticker that simply has no 200 EMA yet,
+            # making "unknown" indistinguishable from "bearish". Emit None instead.
+            emas_known = not any(np.isnan(v) for v in (e8, e21, e50, e200))
+            ema_stack_bullish = (e8 > e21 > e50 > e200) if emas_known else None
+            price_above_200 = (last_close > e200) if not np.isnan(e200) else None
 
             window20 = daily.tail(20)
             swing_high = float(window20["high"].max())
@@ -350,8 +433,8 @@ class FMPClient:
                     "ema21": _round(e21),
                     "ema50": _round(e50),
                     "ema200": _round(e200),
-                    "ema_stack_bullish": bool(ema_stack_bullish),
-                    "price_above_ema200": bool(price_above_200),
+                    "ema_stack_bullish": ema_stack_bullish,
+                    "price_above_ema200": price_above_200,
                     "dist_to_ema200_pct": _round((last_close / e200 - 1.0) * 100.0),
                     "swing_high_20d": _round(swing_high),
                     "swing_low_20d": _round(swing_low),
@@ -362,10 +445,12 @@ class FMPClient:
                     "rsi14": _round(w_rsi.iloc[-1]) if len(w_rsi) else None,
                     "ema8": _round(w_ema8.iloc[-1]) if len(w_ema8) else None,
                     "ema21": _round(w_ema21.iloc[-1]) if len(w_ema21) else None,
-                    "above_ema21": bool(
-                        len(w_ema21)
-                        and not np.isnan(w_ema21.iloc[-1])
-                        and w_close.iloc[-1] > w_ema21.iloc[-1]
+                    # None (not False) when the weekly EMA21 doesn't exist yet --
+                    # "unknown" must not read as "price broke below the weekly EMA".
+                    "above_ema21": (
+                        bool(w_close.iloc[-1] > w_ema21.iloc[-1])
+                        if len(w_ema21) and len(w_close) and not np.isnan(w_ema21.iloc[-1])
+                        else None
                     ),
                 },
                 # Swing structure from highs/lows (see data/structure.py). Uses the

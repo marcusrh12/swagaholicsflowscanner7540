@@ -122,13 +122,68 @@ def _coerce_number(value: Any) -> Optional[float]:
     return None
 
 
-def _validate_cards(parsed: dict) -> tuple[str, list[dict]]:
+def _candidate_index(payload: dict) -> dict[str, dict[tuple, dict]]:
+    """ticker -> {(strike, expiry): candidate} over the real chain we sent the model."""
+    index: dict[str, dict[tuple, dict]] = {}
+    for t in payload.get("tickers", []) or []:
+        sym = str(t.get("symbol", "")).upper()
+        by_key = {}
+        for cand in (t.get("options") or {}).get("call_candidates", []) or []:
+            strike = _coerce_number(cand.get("strike"))
+            expiry = str(cand.get("expiry", "")).strip()
+            if strike is not None and expiry:
+                by_key[(round(strike, 2), expiry)] = cand
+        if by_key:
+            index[sym] = by_key
+    return index
+
+
+def _resolve_contract(
+    ticker: str, contract: dict, index: dict[str, dict[tuple, dict]]
+) -> Optional[dict]:
+    """
+    Match the model's chosen (strike, expiry) against the real chain and rebuild the
+    contract from OUR data, not the model's echo of it.
+
+    The model only gets to *choose*; every number shown to the user -- delta, ask,
+    breakeven, open interest -- is taken from the chain we fetched. A contract that
+    isn't in the candidate list is not tradable, so the card is dropped rather than
+    published with a strike that may not exist.
+    """
+    candidates = index.get(ticker)
+    if not candidates:
+        return None  # no chain for this ticker -> can't stand behind any contract
+    strike = _coerce_number(contract.get("strike"))
+    expiry = str(contract.get("expiration", "")).strip()[:10]
+    if strike is None or not expiry:
+        return None
+    cand = candidates.get((round(strike, 2), expiry))
+    if cand is None:
+        return None
+    return {
+        "expiration": cand["expiry"],
+        "strike": cand["strike"],
+        "delta": cand.get("delta"),
+        "ask": cand.get("ask"),
+        "mid": cand.get("mid"),
+        "breakeven": cand.get("breakeven"),
+        "open_interest": cand.get("open_interest"),
+        "iv": cand.get("iv"),
+        "dte": cand.get("dte"),
+    }
+
+
+def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
     """Filter, normalize and sort trade cards from the parsed model output."""
     summary = str(parsed.get("market_summary", "")).strip()
     raw_cards = parsed.get("trade_cards", [])
     if not isinstance(raw_cards, list):
         return summary, []
 
+    index = _candidate_index(payload)
+    records = {
+        str(t.get("symbol", "")).upper(): t for t in (payload.get("tickers") or [])
+    }
     cards: list[dict] = []
     for c in raw_cards:
         if not isinstance(c, dict):
@@ -147,24 +202,81 @@ def _validate_cards(parsed: dict) -> tuple[str, list[dict]]:
         if count < config.MIN_CONFLUENCE_COUNT:
             continue
 
-        contract = c.get("contract") or {}
+        ticker = str(c.get("ticker", "")).upper()
+        contract = _resolve_contract(ticker, c.get("contract") or {}, index)
+        if contract is None:
+            # The model invented a contract that isn't in the live chain. Publishing
+            # it would put an unbuyable strike in front of a trader -- drop the card.
+            logger.warning(
+                "%s: dropping card -- contract %s not found in the live chain",
+                ticker,
+                c.get("contract"),
+            )
+            continue
+
+        target = _coerce_number(c.get("price_target"))
+        breakeven = contract.get("breakeven")
+        if target is not None and breakeven is not None and target <= breakeven:
+            logger.warning(
+                "%s: dropping card -- price target %.2f is at/below the contract "
+                "breakeven %.2f (the trade loses money even if the thesis is right)",
+                ticker,
+                target,
+                breakeven,
+            )
+            continue
+
+        # The prompt states several hard rules. Prose is not enforcement -- one
+        # instruction-following lapse ships a bad trade, so re-check them here
+        # against the same payload the model was given.
+        record = records.get(ticker, {})
+
+        # 1. Structure veto: a daily downtrend is distribution, whatever else fired.
+        trend = ((record.get("structure") or {}).get("daily") or {}).get("trend")
+        if trend == "downtrend":
+            logger.warning(
+                "%s: dropping card -- daily structure is a downtrend (veto)", ticker
+            )
+            continue
+
+        # 2. Never hold a contract through an earnings report.
+        dte = contract.get("dte")
+        days_to_earnings = (record.get("earnings") or {}).get("days_to_earnings")
+        if dte is not None and days_to_earnings is not None and days_to_earnings < dte:
+            logger.warning(
+                "%s: dropping card -- earnings in %sd but the contract runs %sd "
+                "(would be held through the report)",
+                ticker,
+                days_to_earnings,
+                dte,
+            )
+            continue
+
+        # 3. Reward/risk floor. A card whose rr_ratio didn't parse to a number is a
+        # card with no stated edge -- don't publish it with a blank R/R.
+        rr = _coerce_number(c.get("rr_ratio"))
+        if rr is None or rr < config.MIN_RR_RATIO:
+            logger.warning(
+                "%s: dropping card -- reward/risk %s below the %.1f floor",
+                ticker,
+                "unparseable" if rr is None else f"{rr:.2f}",
+                config.MIN_RR_RATIO,
+            )
+            continue
+
         cards.append(
             {
-                "ticker": str(c.get("ticker", "")).upper(),
+                "ticker": ticker,
                 "bias": "calls",
                 "confidence": "High" if confidence == "high" else "Medium",
                 "confluence_count": count,
                 "confluence_signals": [str(s) for s in signals],
                 "thesis": str(c.get("thesis", "")).strip(),
-                "contract": {
-                    "expiration": str(contract.get("expiration", "")).strip(),
-                    "strike": _coerce_number(contract.get("strike")),
-                    "delta_target": str(contract.get("delta_target", "")).strip(),
-                },
+                "contract": contract,
                 "entry_reference": _coerce_number(c.get("entry_reference")),
                 "stop_level": _coerce_number(c.get("stop_level")),
-                "price_target": _coerce_number(c.get("price_target")),
-                "rr_ratio": _coerce_number(c.get("rr_ratio")),
+                "price_target": target,
+                "rr_ratio": rr,
                 "iv_assessment": str(c.get("iv_assessment", "")).strip(),
             }
         )
@@ -226,7 +338,7 @@ class ClaudeEngine:
         return "".join(parts) if parts else None
 
     async def _analyze_once(
-        self, system_prompt: str, user_content: str, model: str
+        self, system_prompt: str, user_content: str, model: str, payload: dict
     ) -> dict:
         """One call + parse. Raises on refusal, empty output, or unparseable JSON."""
         text = await self._call(system_prompt, user_content, model=model)
@@ -235,14 +347,14 @@ class ClaudeEngine:
         parsed = _extract_json(text)
         if parsed is None:
             raise ValueError("Could not parse JSON from Claude response")
-        summary, cards = _validate_cards(parsed)
+        summary, cards = _validate_cards(parsed, payload)
         logger.info(
             "Claude (%s) produced %s qualifying trade card(s)", model, len(cards)
         )
         return {"market_summary": summary, "trade_cards": cards, "error": None}
 
     async def _fallback_after_refusal(
-        self, system_prompt: str, user_content: str, session: str
+        self, system_prompt: str, user_content: str, session: str, payload: dict
     ) -> dict:
         """Re-run the same prompt on the fallback model after a refusal."""
         fallback = config.CLAUDE_FALLBACK_MODEL
@@ -253,7 +365,7 @@ class ClaudeEngine:
             config.CLAUDE_MODEL,
         )
         try:
-            return await self._analyze_once(system_prompt, user_content, fallback)
+            return await self._analyze_once(system_prompt, user_content, fallback, payload)
         except ClaudeRefusal:
             message = (
                 f"Claude refused the request for session {session}: "
@@ -280,7 +392,7 @@ class ClaudeEngine:
         for attempt in (1, 2):
             try:
                 return await self._analyze_once(
-                    system_prompt, user_content, config.CLAUDE_MODEL
+                    system_prompt, user_content, config.CLAUDE_MODEL, payload
                 )
             except ClaudeRefusal as refusal:
                 # Retrying the same prompt on the same model would just refuse
@@ -289,7 +401,7 @@ class ClaudeEngine:
                     "Claude refused the request for session %s: %s", session, refusal
                 )
                 return await self._fallback_after_refusal(
-                    system_prompt, user_content, session
+                    system_prompt, user_content, session, payload
                 )
             except Exception as exc:
                 logger.warning("Claude analysis attempt %s failed: %s", attempt, exc)

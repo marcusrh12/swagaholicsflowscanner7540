@@ -156,8 +156,13 @@
         <div class="contract">
           <span class="k">Contract</span><br />
           Exp <strong>{{ c.contract.expiration or "n/a" }}</strong>
+          {%- if c.contract.dte is not none %} ({{ c.contract.dte }}d){% endif %}
           &middot; Strike <strong>{{ c.contract.strike if c.contract.strike is not none else "n/a" }}</strong>
-          &middot; Delta <strong>{{ c.contract.delta_target or "n/a" }}</strong>
+          &middot; Delta <strong>{{ "%.2f"|format(c.contract.delta) if c.contract.delta is not none else "n/a" }}</strong>
+          <br />
+          Ask <strong>{{ "%.2f"|format(c.contract.ask) if c.contract.ask is not none else "n/a" }}</strong>
+          &middot; Breakeven <strong>{{ "%.2f"|format(c.contract.breakeven) if c.contract.breakeven is not none else "n/a" }}</strong>
+          &middot; OI <strong>{{ "{:,}".format(c.contract.open_interest) if c.contract.open_interest is not none else "n/a" }}</strong>
         </div>
 
         <div class="grid2">

@@ -111,10 +111,24 @@ def build_ticker_record(
             "iv": uw_data.get("iv"),
             "iv_rank": uw_data.get("iv_rank"),
             "put_call_ratio": uw_data.get("put_call_ratio"),
+            "bullish_premium": uw_data.get("bullish_premium"),
+            "bearish_premium": uw_data.get("bearish_premium"),
+            "net_call_premium_day": uw_data.get("net_call_premium_day"),
+            "net_put_premium_day": uw_data.get("net_put_premium_day"),
             "top_oi": uw_data.get("top_oi", []),
+            # Real, listed calls the model must choose from (strike/expiry/bid/ask/
+            # IV/OI/delta all from the live chain) -- see data/unusual_whales.py.
+            "call_candidates": uw_data.get("call_candidates", []),
+            # Flow, split by actual direction (calls BOUGHT vs SOLD).
+            "flow_available": uw_data.get("flow_available", False),
             "flow_alerts": uw_data.get("flow_alerts", []),
             "flow_count": uw_data.get("flow_count", 0),
-            "total_bull_premium": uw_data.get("total_bull_premium", 0.0),
+            "bullish_alert_count": uw_data.get("bullish_alert_count", 0),
+            "bearish_alert_count": uw_data.get("bearish_alert_count", 0),
+            "bought_call_premium": uw_data.get("bought_call_premium", 0.0),
+            "sold_call_premium": uw_data.get("sold_call_premium", 0.0),
+            "bought_put_premium": uw_data.get("bought_put_premium", 0.0),
+            "net_call_premium": uw_data.get("net_call_premium", 0.0),
         },
         "earnings": {
             "next_date": earnings_date,

@@ -45,33 +45,72 @@ _HISTORY_CARD_RE = re.compile(
 )
 
 
-def _recent_history_files(n: int = 3) -> list:
-    """The last `n` timestamped history HTML files, oldest -> newest by mtime."""
+def _session_stamp(path) -> str:
+    """
+    Sort key for a history file: the '<YYYYmmdd>_<HHMMSS>' stamp from its stem.
+    Zero-padded, so lexicographic order IS chronological order.
+
+    Do NOT sort these by st_mtime. On the GitHub Actions runner the repo is freshly
+    cloned, so every file's mtime is checkout time -- git writes the tree in index
+    (alphabetical) order, which makes mtime order collapse to *filename* order. With
+    session-prefixed names that sorts by session type, not by date: the last-3 window
+    silently fills with three 'pulse' files ('premarket' < 'pulse') and the premarket
+    sessions are never read at all. The bug is invisible locally, where mtimes are real.
+    """
+    stem = path.stem
+    _, _, stamp = stem.partition("_")
+    return stamp or stem
+
+
+def _recent_history_files(n: int = config.HISTORY_SESSIONS) -> list:
+    """The last `n` timestamped history HTML files, oldest -> newest chronologically."""
     try:
-        files = sorted(
-            config.HISTORY_DIR.glob("*.html"),
-            key=lambda p: p.stat().st_mtime,
-        )
+        files = sorted(config.HISTORY_DIR.glob("*.html"), key=_session_stamp)
     except OSError:
         return []
     return files[-n:]
 
 
-def load_recent_history(n: int = 3) -> dict[str, list[tuple[str, int]]]:
+def _is_error_page(html: str) -> bool:
     """
-    Read the last `n` timestamped history files (sorted by modification time) and
-    extract, per ticker, the confluence count it showed in each session it appeared
-    in. Returns a dict mapping ticker -> list of (session_timestamp, confluence_count)
-    for its appearances, ordered oldest -> newest session. Fault-tolerant: a missing
-    or unparseable file is skipped rather than raising.
+    True if this archived session is a SCANNER FAILURE page, not a real session.
+
+    A failed Claude call renders an error page with zero cards. Counting it as a
+    session breaks every live streak: the ticker is absent from the '1 session ago'
+    slot, so _compute_streaks sees a gap and reports no streak -- one transient API
+    error silently erases days of streak state. A genuinely quiet tape (0 cards, no
+    error) is a real session and *should* break streaks; only failures are skipped.
     """
-    history: dict[str, list[tuple[str, int]]] = {}
-    for path in _recent_history_files(n):
+    return '<div class="error">' in html
+
+
+def _readable_history_files(n: int) -> list[tuple[str, str]]:
+    """(stem, html) for the last `n` real sessions, oldest -> newest, errors skipped."""
+    out: list[tuple[str, str]] = []
+    # Walk newest-first so skipped error pages are backfilled with older real sessions.
+    for path in reversed(_recent_history_files(config.HISTORY_SCAN_DEPTH)):
         try:
             html = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        stem = path.stem  # e.g. "postmarket_20260702_165627"
+        if _is_error_page(html):
+            logger.info("Skipping error page in streak history: %s", path.name)
+            continue
+        out.append((path.stem, html))
+        if len(out) >= n:
+            break
+    return list(reversed(out))
+
+
+def load_recent_history(n: int = config.HISTORY_SESSIONS) -> dict[str, list[tuple[str, int]]]:
+    """
+    Read the last `n` real (non-error) history files, chronologically, and extract per
+    ticker the confluence count it showed in each session it appeared in. Returns
+    ticker -> [(session_stem, confluence_count)], ordered oldest -> newest.
+    Fault-tolerant: an unreadable file is skipped rather than raising.
+    """
+    history: dict[str, list[tuple[str, int]]] = {}
+    for stem, html in _readable_history_files(n):
         seen: set[str] = set()
         for m in _HISTORY_CARD_RE.finditer(html):
             sym = m.group(1).upper()
@@ -82,11 +121,11 @@ def load_recent_history(n: int = 3) -> dict[str, list[tuple[str, int]]]:
     return history
 
 
-def _sessions_ago_map(n: int = 3) -> dict[str, int]:
-    """Map each recent session file stem -> how many sessions ago it was (newest = 1)."""
-    files = _recent_history_files(n)
-    k = len(files)
-    return {p.stem: k - i for i, p in enumerate(files)}
+def _sessions_ago_map(n: int = config.HISTORY_SESSIONS) -> dict[str, int]:
+    """Map each recent session stem -> how many sessions ago it was (newest = 1)."""
+    stems = [stem for stem, _ in _readable_history_files(n)]
+    k = len(stems)
+    return {stem: k - i for i, stem in enumerate(stems)}
 
 
 def _repeat_history_for_prompt(
@@ -197,10 +236,12 @@ async def _fetch_one(
     uw: UnusualWhalesClient,
     symbol: str,
 ) -> tuple[str, dict | None, dict]:
-    fmp_data, uw_data = await asyncio.gather(
-        fmp.get_ticker_data(symbol),
-        uw.get_options_data(symbol),
-    )
+    # FMP first: the UW chain needs the spot price to filter to near-the-money
+    # calls and compute their deltas, so these can't be fetched concurrently.
+    # Tickers still run in parallel, so the cost is one round-trip, not a serial scan.
+    fmp_data = await fmp.get_ticker_data(symbol)
+    spot = (fmp_data or {}).get("price")
+    uw_data = await uw.get_options_data(symbol, spot=spot)
     return symbol, fmp_data, uw_data
 
 

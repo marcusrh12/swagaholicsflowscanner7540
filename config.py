@@ -81,6 +81,16 @@ MARKET_EXCHANGE = "NASDAQ"            # exchange whose holiday calendar gates tr
 EARNINGS_EXCLUSION_DAYS = 16          # skip tickers reporting within N days
 EARNINGS_LOOKAHEAD_DAYS = 90          # window used to find the nearest earnings date
 
+# FMP's earnings-calendar endpoint caps a response at 4000 rows and truncates from
+# the NEAR end, so one 90-day request silently returned only days 29-90 -- the
+# exclusion window was empty and no reporter was ever filtered out. Fetch the window
+# in chunks small enough that no single response can hit the cap.
+# 14 still hit the cap during peak earnings season (a single 2-week chunk returned
+# exactly 4000 rows). 7 keeps every chunk clear of it; the ERROR log above is the
+# tripwire if a future season pushes past it again.
+EARNINGS_CHUNK_DAYS = 7
+EARNINGS_ROW_CAP = 4000               # if a chunk returns this many rows, it truncated
+
 TARGET_MIN_TICKERS = 40               # desired post-filter universe size (floor)
 TARGET_MAX_TICKERS = 60               # desired post-filter universe size (cap)
 
@@ -90,9 +100,17 @@ MACRO_TICKERS = ["SPY", "QQQ"]
 # --------------------------------------------------------------------------- #
 # Data window parameters
 # --------------------------------------------------------------------------- #
-DAILY_LOOKBACK_BARS = 250             # enough to seed EMA200 + 200 days of history
+# EMA200 needs a long warm-up to converge: ewm(adjust=False) seeds off the first bar,
+# and at ~293 bars roughly 5% of the value is still that seed. Measured against 5y of
+# real prices, that skewed dist_to_ema200_pct by up to ~1.9 points. 700 bars drives the
+# residual seed weight to ~0.1%. Costs nothing but a wider date range on the same call.
+DAILY_LOOKBACK_BARS = 700
 WEEKLY_LOOKBACK_WEEKS = 52
 HOURLY_LOOKBACK_DAYS = 10
+
+# A ticker needs at least this much daily history to be analyzable at all. Below 200
+# bars there is no EMA200, hence no trend regime, which is the scanner's core gate.
+MIN_DAILY_BARS = 200
 
 # --------------------------------------------------------------------------- #
 # Chart-structure parameters (data/structure.py)
@@ -119,7 +137,29 @@ CONSOLIDATION_MIN_BARS_WEEKLY = 4
 # --------------------------------------------------------------------------- #
 MIN_FLOW_PREMIUM = 50_000             # unusual flow alerts must exceed this premium ($)
 FLOW_LOOKBACK_DAYS = 5                # only consider flow from the past N days
+FLOW_FETCH_LIMIT = 200                # alerts pulled per ticker (endpoint is newest-first)
+FLOW_ALERTS_SHOWN = 10                # largest alerts surfaced to the model per ticker
 TOP_OI_STRIKES = 5                    # number of top open-interest strikes to surface
+
+# UW reports IV as a fraction (0.28 = 28%). Values above 1.0 are legitimate on
+# high-vol names; this is only a tripwire for a scale change at the source.
+IV_SANITY_MAX = 10.0                  # 1000% IV -- beyond this the field is suspect
+
+# --------------------------------------------------------------------------- #
+# Option-chain / contract selection (data/unusual_whales.py)
+# --------------------------------------------------------------------------- #
+# The chain is filtered down to a shortlist of REAL, tradable calls that the
+# model then picks from -- rather than inventing a strike, expiry and delta that
+# may not correspond to any listed contract.
+CHAIN_FETCH_LIMIT = 500               # contracts pulled per ticker from UW
+CHAIN_MIN_MONEYNESS = -0.05           # strike vs spot: 5% ITM ...
+CHAIN_MAX_MONEYNESS = 0.10            # ... through 10% OTM
+CHAIN_MIN_OPEN_INTEREST = 100         # skip illiquid strikes you can't get filled on
+CHAIN_MAX_CANDIDATES = 12             # shortlist size handed to the model per ticker
+
+# Used only for the Black-Scholes delta on candidate contracts. Delta is not very
+# sensitive to this, so an approximate short-rate is fine.
+RISK_FREE_RATE = 0.04
 
 # --------------------------------------------------------------------------- #
 # Analysis parameters
@@ -129,6 +169,9 @@ TOP_OI_STRIKES = 5                    # number of top open-interest strikes to s
 # 3-of-6 it replaced; 4-of-7 keeps the bar where it was.
 MIN_CONFLUENCE_COUNT = 4
 CONFLUENCE_CATEGORY_COUNT = 7         # kept in sync with the rubric in prompt_builder
+
+# Reward/risk floor, enforced in claude_engine (not just asked for in the prompt).
+MIN_RR_RATIO = 1.5
 
 # Expiration selection window (days-to-expiration) for recommended contracts.
 MIN_DTE = 7                          # hard floor: never recommend an expiration closer than this
@@ -148,6 +191,17 @@ SCAN_SESSIONS = {
     "pulse": "14:00",      # did it hold: FMP's daily bar updates intraday, so this re-reads
                            # today's live bar past the lunch chop, with time left to act
 }
+
+# --------------------------------------------------------------------------- #
+# Streak / repeat-ticker history
+# --------------------------------------------------------------------------- #
+# How many prior REAL sessions feed the streak badges and the repeat-ticker block.
+# At 2 scans/day, 3 sessions was only 1.5 trading days -- too short to see a
+# day-over-day streak at all. 6 covers ~3 trading days.
+HISTORY_SESSIONS = 6
+# How many archived files to look back through to find those 6 real sessions
+# (scanner-error pages are skipped, so this needs headroom above HISTORY_SESSIONS).
+HISTORY_SCAN_DEPTH = 20
 
 # --------------------------------------------------------------------------- #
 # Output
