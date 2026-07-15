@@ -1,0 +1,14 @@
+name = "flowscanner-cron"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# UTC crons — both the EDT (UTC-4) and EST (UTC-5) firing of each session, same
+# as the GitHub backup schedule. worker.js gates on the real Eastern hour so only
+# the correct twin dispatches; the other is a no-op.
+[triggers]
+crons = [
+  "0 13 * * 1-5",  # 09:00 ET premarket while EDT
+  "0 14 * * 1-5",  # 09:00 ET premarket while EST
+  "0 18 * * 1-5",  # 14:00 ET pulse while EDT
+  "0 19 * * 1-5",  # 14:00 ET pulse while EST
+]
