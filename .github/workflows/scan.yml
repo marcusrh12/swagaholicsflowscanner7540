@@ -6,22 +6,14 @@ name: FlowScanner Scan
 #                         re-reads EMAs/RSI/structure against today's live bar,
 #                         past the lunch chop, with time left to act before close.
 #
-# PRIMARY trigger is an external Cloudflare Worker cron (see cloudflare/) that
-# hits workflow_dispatch at the right Eastern time and passes session_type
-# explicitly. GitHub's own `schedule` events can be delayed by hours during peak
-# load, which silently skipped scans; the external cron fires on time and its
+# The ONLY trigger is workflow_dispatch, driven by an external Cloudflare Worker
+# cron (see cloudflare/) that fires at the right Eastern time and passes
+# session_type explicitly (premarket / pulse). GitHub's own `schedule` trigger
+# was removed deliberately: its events can be delayed by hours (which skipped
+# scans), and keeping it alongside the Worker would fire each session twice —
+# wasted Actions minutes and duplicate commits. The Worker fires on time and its
 # dispatch starts almost immediately.
-#
-# The `schedule` crons below are kept only as a BACKUP for when the external cron
-# misses. GitHub cron is UTC and does NOT follow DST, so each session is scheduled
-# at BOTH its EDT (UTC-4) and EST (UTC-5) offset; the guard step maps the fired
-# cron line (delay-immune) to a session, gated by the current Eastern offset.
 on:
-  schedule:
-    - cron: '0 13 * * 1-5'  # 09:00 ET while EDT
-    - cron: '0 14 * * 1-5'  # 09:00 ET while EST
-    - cron: '0 18 * * 1-5'  # 14:00 ET while EDT
-    - cron: '0 19 * * 1-5'  # 14:00 ET while EST
   workflow_dispatch:
     inputs:
       session_type:
@@ -42,36 +34,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # First step, before any checkout or install: a firing at the wrong Eastern
-      # hour (the DST twin of the real one) exits here having cost nothing.
       - name: Determine session type
         id: session
         env:
           DISPATCH_SESSION: ${{ github.event.inputs.session_type }}
         run: |
-          if [ -n "$DISPATCH_SESSION" ]; then
-            # Primary path: the Cloudflare Worker cron (see cloudflare/) fires ON
-            # TIME and dispatches with the session already resolved. We trust it
-            # verbatim — no wall-clock guessing.
-            session="$DISPATCH_SESSION"
-          else
-            # Fallback path: GitHub's native `schedule` trigger fired instead
-            # (safety net for when the external cron misses). GitHub can delay a
-            # scheduled run by hours, so we must NOT key off the wall clock at
-            # execution time — a premarket cron delayed to 10:43 ET must still be
-            # treated as premarket. Map the cron line that actually fired to a
-            # session, gated by the current Eastern UTC offset so exactly one of
-            # each DST twin runs.
-            offset=$(TZ=America/New_York date +%z)   # -0400 EDT, -0500 EST
-            case "${{ github.event.schedule }}" in
-              '0 13 * * 1-5') [ "$offset" = "-0400" ] && session=premarket || session=skip ;;
-              '0 14 * * 1-5') [ "$offset" = "-0500" ] && session=premarket || session=skip ;;
-              '0 18 * * 1-5') [ "$offset" = "-0400" ] && session=pulse     || session=skip ;;
-              '0 19 * * 1-5') [ "$offset" = "-0500" ] && session=pulse     || session=skip ;;
-              *)              session=skip ;;
-            esac
-            echo "Schedule '${{ github.event.schedule }}' offset $offset -> session '$session'"
-          fi
+          # The only trigger is workflow_dispatch from the Cloudflare Worker cron
+          # (see cloudflare/), which fires ON TIME and passes the resolved session
+          # (premarket / pulse). A manual "Run workflow" click passes 'manual'. We
+          # trust the dispatched value verbatim — no wall-clock guessing.
+          session="${DISPATCH_SESSION:-manual}"
           echo "session_type=$session" >> "$GITHUB_OUTPUT"
           echo "Session type: $session"
 
