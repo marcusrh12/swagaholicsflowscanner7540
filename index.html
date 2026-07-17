@@ -72,6 +72,23 @@
     .badge.High { background: rgba(63,185,80,0.15); color: var(--high); border: 1px solid var(--high); }
     .badge.Medium { background: rgba(210,153,34,0.15); color: var(--medium); border: 1px solid var(--medium); }
     .badge.count { background: var(--panel-2); color: var(--blue); border: 1px solid var(--border); }
+    /* Entry-zone status. NOTE: these pills must stay AFTER .badge.count in the DOM --
+       renderer._inject_streak_badges anchors on `.badges` being immediately followed
+       by `<span class="badge count">`, and inserts the streak badge right after it. */
+    .badge.zone-in { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
+    .badge.zone-ext { background: rgba(210,153,34,0.15); color: var(--amber); border: 1px solid var(--amber); }
+    .badge.zone-below { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid var(--red); }
+    .badge.zone-watch { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
+    /* A WATCH card is a plan, not a trade -- it must never read as buy-it-now. */
+    .card.watch { border-style: dashed; border-color: var(--blue); opacity: 0.85; }
+    .watch-note {
+      font-size: 12px; color: var(--blue); background: rgba(88,166,255,0.08);
+      border: 1px dashed rgba(88,166,255,0.4); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px;
+    }
+    .metric .v.zone { font-size: 14px; }
+    .metric .v .sub { display: block; font-size: 10px; font-weight: 500; color: var(--muted); margin-top: 1px; }
+    .zone-levels { font-size: 11px; color: var(--muted); margin-top: -4px; margin-bottom: 10px; }
+    .zone-levels .held { color: var(--green); }
     .thesis { font-size: 13.5px; color: var(--text); }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
     .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
@@ -103,7 +120,7 @@
     <header class="top">
       <div>
         <h1><span>Flow</span>Scanner</h1>
-        <div class="session-time">Pulse session &middot; generated 2026-07-16 18:04:57 UTC</div>
+        <div class="session-time">Pulse session &middot; generated 2026-07-17 18:22:09 UTC</div>
       </div>
       <div class="session-time">Auto-refresh every 5 min</div>
     </header>
@@ -111,19 +128,23 @@
     <div class="macro-bar">
       <div class="macro-chip">
         <div class="k">SPY</div>
-        <div class="v bullish">Bullish @ 751.28</div>
+        <div class="v bullish">Bullish @ 744.43</div>
       </div>
       <div class="macro-chip">
         <div class="k">QQQ</div>
-        <div class="v bullish">Mildly Bullish @ 706.67</div>
+        <div class="v bullish">Mildly Bullish @ 698.03</div>
       </div>
       <div class="macro-chip">
         <div class="k">VIX</div>
-        <div class="v bullish">16.50 (normal)</div>
+        <div class="v bullish">18.30 (normal)</div>
+      </div>
+      <div class="macro-chip">
+        <div class="k">Tape</div>
+        <div class="v bullish">Firm &middot; 79% green</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tickers Scanned</div>
-        <div class="v">30</div>
+        <div class="v">33</div>
       </div>
       <div class="macro-chip">
         <div class="k">Qualifying Setups</div>
@@ -134,7 +155,7 @@
     
 
     
-    <div class="summary">SPY remains in a bullish trend with VIX in a normal regime, but QQQ is soft and the semiconductor/AI complex is broadly in daily downtrends (MU, SNDK, MRVL, AMAT, AVGO, CRWV all structurally vetoed). A selective tape: only financials and NVDA show constructive structure with acceptable reward/risk.</div>
+    <div class="summary">Intraday tape is firm — 78.8% of the universe green, median +2.45% from open, QQQ outperforming — but VIX is up 9.4% and most of the semi complex is bouncing inside confirmed daily downtrends, which are structural vetoes. Only names with intact bullish structure qualify; the bounce elsewhere is not a setup.</div>
     
 
     
@@ -144,72 +165,94 @@
         <div class="card-head">
           <div class="ticker">JPM<small>CALLS</small></div>
           <div class="badges">
-            <span class="badge count">7 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">3rd hit — stable</span>
+            <span class="badge count">7 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">4th hit — stable</span><span class="badge zone-ext">EXTENDED 4.9%</span>
             <span class="badge High">High</span>
           </div>
         </div>
 
-        <div class="thesis">JPM is coiled at the top of a 10-bar consolidation (325.75-351.24) with cheap IV, positive institutional call flow, and full trend/momentum alignment; a breakout targets the measured move near 377. Streak note: 3rd consecutive session appearing (6, 7, 7 confluences) with strengthening confluence, confirming High confidence. 36 DTE chosen because the ~10% measured move needs time and earnings are 89 days out.</div>
+        
+
+        <div class="thesis">JPM appears for a 5th consecutive session with confluence stable at 7 — the strongest repeat name in the scan. Price is coiled at the top of an 11-bar 326-351 range with a bullish stack beneath and cheap IV; a break of 351.24 projects a ~377 measured move. Note price is 4.9% extended above the 322.64-326.64 support shelf (3 touches), so the premium is best deployed on strength through the range high or a retest of that shelf, not blindly here; loss of the 325.75 range low invalidates the coil.</div>
 
         <div class="contract">
           <span class="k">Contract</span><br />
-          Exp <strong>2026-08-21</strong> (36d)
-          &middot; Strike <strong>345.0</strong>
-          &middot; Delta <strong>0.51</strong>
+          Exp <strong>2026-08-21</strong> (35d)
+          &middot; Strike <strong>340.0</strong>
+          &middot; Delta <strong>0.59</strong>
           <br />
-          Ask <strong>9.95</strong>
-          &middot; Breakeven <strong>354.95</strong>
-          &middot; OI <strong>3,017</strong>
+          Ask <strong>12.35</strong>
+          &middot; Breakeven <strong>352.35</strong>
+          &middot; OI <strong>4,049</strong>
         </div>
 
         <div class="grid2">
           <div class="metric">
-            <div class="k">Entry Ref</div>
-            <div class="v">343.66</div>
+            <div class="k">Entry Zone</div>
+            <div class="v zone">322.64–326.64
+                <span class="sub">4.9% below · 2.1 ATR · strong</span></div>
           </div>
           <div class="metric">
             <div class="k">Option R/R</div>
-            <div class="v rr">2.75 <span style="font-size:11px;color:var(--muted)">(stock 2.3)</span></div>
+            <div class="v rr">2.40
+              <span style="font-size:11px;color:var(--muted)">&rarr; 9.61 at zone*</span> <span class="sub">stock 1.8 &middot; entry 343.32</span></div>
           </div>
           <div class="metric">
             <div class="k">Target</div>
-            <div class="v target">376.73</div>
+            <div class="v target">376.70</div>
           </div>
           <div class="metric">
             <div class="k">Stop</div>
-            <div class="v stop">329.50</div>
+            <div class="v stop">325.00</div>
           </div>
         </div>
 
+        
+        <div class="zone-levels">
+          Zone: Daily pivot low 325.01 &middot; Daily pivot low 325.75 &middot; Range low 325.75 &middot; EMA50 323.53 &middot; <span class="held">held 3&times;</span>
+        </div>
+        
+
         <ul class="signals">
           
-          <li>Trend alignment: daily EMA8&gt;21&gt;50&gt;200 stack bullish, weekly above EMA21</li>
+          <li>Trend alignment: full bullish daily EMA stack, weekly close above ema21</li>
           
-          <li>Momentum: daily RSI 63.4, weekly RSI 64, daily MACD hist positive</li>
+          <li>Momentum: daily RSI 62.9, weekly RSI 66.5, MACD hist positive</li>
           
-          <li>Volatility setup: IV rank 19.1 is cheap, ATR 2.26% leaves room to target</li>
+          <li>Volatility setup: IV rank 24.6 is cheap with ATR room to the measured target</li>
           
-          <li>Options market: cheap premium, P/C 0.84, heavy call OI at 340/360</li>
+          <li>Options market: put/call 0.53, low IV rank favors long premium</li>
           
-          <li>Smart money flow: net call premium +2.54M, bullish premium &gt; bearish, 24v16 bullish alerts</li>
+          <li>Smart money flow: net call premium +$0.68M bought, bullish premium edges bearish</li>
           
-          <li>Macro alignment: SPY bullish, VIX normal, RS vs SPY +2.5% (5d) / +3.65% (20d)</li>
+          <li>Macro alignment: SPY bullish above EMA200, VIX normal, JPM +2.5% vs SPY over 20d</li>
           
-          <li>Market structure: 10-bar consolidation, at lookback highs, coiled 2.2% under range high 351.24, price above last pivot high</li>
+          <li>Market structure: 11-bar consolidation, price above last pivot high, 2.3% under range high 351.24</li>
           
         </ul>
 
         
         <div class="iv">
-          Contract modelled at 826 at risk per contract
-          &middot; worth ~32.65 at target,
-          ~1.69 at stop
+          Contract modelled at 1046 at risk per contract
+          &middot; worth ~37.49 at target,
+          ~1.89 at stop
           <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
         </div>
         
 
         
-        <div class="iv">IV: IV rank 19.1 with contract IV ~22% makes premium cheap for entry -- buying calls here does not overpay for volatility.</div>
+        <div class="iv">
+          At zone ~324.64: premium
+          ~4.16
+          (vs 12.35 now) &middot; delta ~0.29
+          &middot; stop 316.65
+          <br /><span style="color:var(--amber)">*this strike is far OTM down there (delta
+          0.29) -- the at-zone ratio is flattered by a
+          near-worthless premium. At that price you would want a nearer strike.</span>
+        </div>
+        
+
+        
+        <div class="iv">IV: IV rank 24.6 with 23.4% contract IV is cheap for a mega-cap financial — favorable for buying premium into a range break.</div>
         
       </div>
       
@@ -217,70 +260,89 @@
         <div class="card-head">
           <div class="ticker">NVDA<small>CALLS</small></div>
           <div class="badges">
-            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">4th hit — stable</span>
+            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">5th hit — stable</span><span class="badge zone-ext">EXTENDED 1.3%</span>
             <span class="badge High">High</span>
           </div>
         </div>
 
-        <div class="thesis">NVDA holds a daily higher-high/higher-low uptrend inside a weekly consolidation and sits 1.4% under the 213.99 range high; a breakout carries a measured move toward ~238, with 235 as the target. Flow was not counted (net call premium only marginally positive against heavier day-aggregate bearish premium). Streak note: 3rd+ consecutive session with stable 6-confluence reads, supporting High confidence. 36 DTE fits the larger measured-move breakout and clears the 41-day earnings gap only slightly -- earnings (Aug 26) fall 5 days after expiry, so no earnings hold.</div>
+        
+
+        <div class="thesis">NVDA logs its 5th consecutive scan appearance with confluence stable at 6 — a daily uptrend coiled inside a 6-week weekly base whose measured move projects ~238 on a break of 214. Entry zone (197.45-201.19) is only marginally below, so the current price is a fair reference rather than a chase, but a dip toward 199-201 improves the premium. A close below the 189.8 range low breaks the higher-low sequence and kills the thesis; 35 DTE fits the larger measured-move objective, and earnings (Aug 26) fall after expiry.</div>
 
         <div class="contract">
           <span class="k">Contract</span><br />
-          Exp <strong>2026-08-21</strong> (36d)
-          &middot; Strike <strong>210.0</strong>
-          &middot; Delta <strong>0.49</strong>
+          Exp <strong>2026-08-21</strong> (35d)
+          &middot; Strike <strong>200.0</strong>
+          &middot; Delta <strong>0.60</strong>
           <br />
-          Ask <strong>9.25</strong>
-          &middot; Breakeven <strong>219.25</strong>
-          &middot; OI <strong>29,737</strong>
+          Ask <strong>12.45</strong>
+          &middot; Breakeven <strong>212.45</strong>
+          &middot; OI <strong>25,765</strong>
         </div>
 
         <div class="grid2">
           <div class="metric">
-            <div class="k">Entry Ref</div>
-            <div class="v">206.73</div>
+            <div class="k">Entry Zone</div>
+            <div class="v zone">197.45–201.19
+                <span class="sub">1.3% below · 0.4 ATR · moderate</span></div>
           </div>
           <div class="metric">
             <div class="k">Option R/R</div>
-            <div class="v rr">2.80 <span style="font-size:11px;color:var(--muted)">(stock 3.7)</span></div>
+            <div class="v rr">2.83
+              <span style="font-size:11px;color:var(--blue)">&rarr; 4.29 at zone</span> <span class="sub">stock 2.4 &middot; entry 203.89</span></div>
           </div>
           <div class="metric">
             <div class="k">Target</div>
-            <div class="v target">235.00</div>
+            <div class="v target">238.20</div>
           </div>
           <div class="metric">
             <div class="k">Stop</div>
-            <div class="v stop">199.00</div>
+            <div class="v stop">189.50</div>
           </div>
         </div>
 
+        
+        <div class="zone-levels">
+          Zone: Daily pivot low 199.34 &middot; Daily support 199.34 &middot; Weekly EMA21 199.31 &middot; <span class="held">held 2&times;</span>
+        </div>
+        
+
         <ul class="signals">
           
-          <li>Trend alignment: daily EMA stack bullish above EMA200, weekly close above EMA21</li>
+          <li>Trend alignment: bullish daily EMA stack, price above EMA200, weekly above ema21</li>
           
-          <li>Momentum: daily MACD hist positive with fresh cross, daily RSI 51.6 / weekly 57.3 rising</li>
+          <li>Momentum: daily MACD crossed positive (hist +1.25), weekly RSI 53.7 constructive</li>
           
-          <li>Volatility setup: IV rank 41.5 reasonable, ATR 3.55% gives room to target</li>
+          <li>Options market: put/call 0.53 bullish skew, heavy call OI clustered at 210/215/220</li>
           
-          <li>Options market: P/C 0.473 skews bullish, dense call OI clustered 210-220</li>
+          <li>Smart money flow: net call premium +$5.6M bought, day net calls +$10.6M, bullish premium exceeds bearish</li>
           
-          <li>Macro alignment: SPY bullish, VIX normal, RS vs SPY +2.0% over 5d</li>
+          <li>Macro alignment: +0.74% from open, outperforming SPY&#39;s +0.32% on a firm tape</li>
           
-          <li>Market structure: daily HH/HL uptrend, weekly consolidation 189.8-213.99 with price 1.4% under the range high</li>
+          <li>Market structure: daily HH/HL uptrend coiled inside a 6-week 189.8-213.99 weekly consolidation, ~5% under range high</li>
           
         </ul>
 
         
         <div class="iv">
-          Contract modelled at 611 at risk per contract
-          &middot; worth ~26.33 at target,
+          Contract modelled at 931 at risk per contract
+          &middot; worth ~38.78 at target,
           ~3.14 at stop
           <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
         </div>
         
 
         
-        <div class="iv">IV: IV rank 41.5 with ~40% contract IV is mid-range -- not cheap, but reasonable for a breakout entry where realized vol should expand.</div>
+        <div class="iv">
+          At zone ~199.32: premium
+          ~9.88
+          (vs 12.45 now) &middot; delta ~0.53
+          &middot; stop 189.50
+        </div>
+        
+
+        
+        <div class="iv">IV: IV rank 45.5 with ~42% contract IV is mid-range — not cheap, but reasonable for a defined weekly-base breakout with a target well past breakeven.</div>
         
       </div>
       
