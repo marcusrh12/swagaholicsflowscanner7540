@@ -2,9 +2,18 @@
 
 GitHub's native `schedule` trigger can be delayed by hours, which caused
 premarket scans to fire after the open (or, with the wall-clock guard, to skip
-entirely). This Worker is the **primary** trigger: Cloudflare Cron Triggers fire
-on time, and the Worker calls GitHub's `workflow_dispatch` API with the session
-already resolved. The workflow's own `schedule` crons remain as a backup.
+entirely). This Worker is the **primary** trigger: it calls GitHub's
+`workflow_dispatch` API with the session already resolved, and in practice fires
+within seconds of the scheduled minute.
+
+**It is not guaranteed to fire, and it is not a substitute for the backup.**
+Cloudflare publishes no execution guarantee for Cron Triggers — Workers run "on
+underutilized machines to make the best use of Cloudflare's capacity". On
+2026-07-17 the 13:00 UTC firing was skipped outright: zero invocations, no
+error, no Cloudflare incident, crons still registered, Worker healthy — the day
+simply had no scans. So the workflow's own `schedule` crons are a **required**
+backup, not decoration: they cover the case where this Worker silently doesn't
+run, and the workflow's guard means they no-op when it does. Do not remove them.
 
 ## One-time setup
 

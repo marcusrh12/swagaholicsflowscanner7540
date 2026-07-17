@@ -7,10 +7,18 @@
 // workflow_dispatch API with session_type already decided. The workflow trusts
 // that value verbatim — no wall-clock guessing on the GitHub side.
 //
+// WHEN this Worker fires it fires punctually, but WHETHER it fires is not
+// guaranteed: Cloudflare gives Cron Triggers no execution guarantee, and on
+// 2026-07-17 the 13:00 UTC firing was skipped silently (see README.md). That is
+// why scan.yml keeps its own `schedule` crons as a backup. Note the coupling:
+// the hour gate below is only correct BECAUSE CF is punctual — a late firing
+// would read the wrong Eastern hour and skip rather than misfire, which is the
+// safe direction, and the GitHub backup then covers the miss.
+//
 // Cloudflare crons are UTC and do not follow DST, so (like GitHub) we register
 // both the EDT and EST firing of each session in wrangler.toml. Here we gate on
-// the ACTUAL Eastern hour — which is reliable precisely because CF fires on time
-// — so exactly one twin of each pair proceeds and the other is a no-op.
+// the ACTUAL Eastern hour, so exactly one twin of each pair proceeds and the
+// other is a no-op.
 
 const OWNER = "marcusrh12";
 const REPO = "swagaholicsflowscanner7540";

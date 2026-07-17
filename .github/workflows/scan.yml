@@ -6,14 +6,44 @@ name: FlowScanner Scan
 #                         re-reads EMAs/RSI/structure against today's live bar,
 #                         past the lunch chop, with time left to act before close.
 #
-# The ONLY trigger is workflow_dispatch, driven by an external Cloudflare Worker
-# cron (see cloudflare/) that fires at the right Eastern time and passes
-# session_type explicitly (premarket / pulse). GitHub's own `schedule` trigger
-# was removed deliberately: its events can be delayed by hours (which skipped
-# scans), and keeping it alongside the Worker would fire each session twice —
-# wasted Actions minutes and duplicate commits. The Worker fires on time and its
-# dispatch starts almost immediately.
+# TWO TRIGGERS, AND NEITHER IS RELIABLE ALONE:
+#
+#   PRIMARY -- workflow_dispatch from a Cloudflare Worker cron (see cloudflare/).
+#   It fires on time and passes session_type already resolved. But Cloudflare
+#   publishes no execution guarantee for Cron Triggers: Workers run "on
+#   underutilized machines to make the best use of Cloudflare's capacity". On
+#   2026-07-17 the 13:00 UTC firing was skipped outright -- zero invocations,
+#   no error, no incident -- and the day's scans simply never happened.
+#
+#   BACKUP -- the `schedule` crons below. GitHub's own cron can be delayed by
+#   hours, so it cannot be trusted to be ON TIME. But it is a second, unrelated
+#   scheduler, and a late scan beats no scan.
+#
+# Each covers the other's failure mode. This is deliberate redundancy, so do not
+# "simplify" it back to one trigger: a previous revision dropped this backup to
+# stop double-firing, which left a best-effort cron as the single point of
+# failure with no alerting -- and a skipped cron became a silently missing scan.
+#
+# DOUBLE-FIRING IS NOW STRUCTURALLY IMPOSSIBLE, which is what makes keeping both
+# safe. The `concurrency` group below serialises the two runs, and the backup
+# path then refuses to repeat a session that is already archived (see the guard
+# step). So the backup no-ops on a normal day and only does work when the
+# primary actually missed.
 on:
+  schedule:
+    # BACKUP ONLY -- deliberately offset past the Worker's firing so that on a
+    # normal day the primary has already run, committed, and pushed, and the
+    # guard below turns these into a no-op.
+    #
+    # GitHub cron is UTC and does not follow DST. These are NOT DST twins that
+    # need gating, though: the guard resolves the session from the real Eastern
+    # clock and from what is missing, never from which cron line fired. So each
+    # pair is simply two chances per session across both offsets, and a firing
+    # with nothing due exits in seconds.
+    - cron: '15 13 * * 1-5'  # 09:15 ET while EDT / 08:15 ET while EST (no-op)
+    - cron: '15 14 * * 1-5'  # 10:15 ET while EDT (no-op) / 09:15 ET while EST
+    - cron: '15 18 * * 1-5'  # 14:15 ET while EDT / 13:15 ET while EST (no-op)
+    - cron: '15 19 * * 1-5'  # 15:15 ET while EDT (no-op) / 14:15 ET while EST
   workflow_dispatch:
     inputs:
       session_type:
@@ -25,6 +55,9 @@ on:
 permissions:
   contents: write
 
+# Load-bearing for the backup trigger, not just tidiness: this serialises a
+# primary run and a backup run that overlap, so the backup's guard always reads
+# the history the primary just pushed instead of racing it.
 concurrency:
   group: flowscanner-scan
   cancel-in-progress: false
@@ -34,18 +67,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Determine session type
+      - name: Resolve session
         id: session
         env:
+          EVENT_NAME: ${{ github.event_name }}
           DISPATCH_SESSION: ${{ github.event.inputs.session_type }}
         run: |
-          # The only trigger is workflow_dispatch from the Cloudflare Worker cron
-          # (see cloudflare/), which fires ON TIME and passes the resolved session
-          # (premarket / pulse). A manual "Run workflow" click passes 'manual'. We
-          # trust the dispatched value verbatim — no wall-clock guessing.
-          session="${DISPATCH_SESSION:-manual}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Primary path. The Cloudflare Worker resolves the session itself when
+            # it fires; a manual "Run workflow" click passes 'manual' or a typed-in
+            # session. Either way the caller has already decided, so we trust it
+            # verbatim and never dedupe -- a human clicking the button means it,
+            # even if that session already ran today.
+            session="${DISPATCH_SESSION:-manual}"
+            dedupe=false
+          else
+            # Backup path. GitHub's schedule can be delayed by hours, so the cron
+            # line that fired says nothing about what time it is NOW -- mapping
+            # line -> session is exactly what made the old backup fire scans late
+            # or skip them. Resolve from the real Eastern clock instead, and run
+            # whichever session is already due. Delay-immune and DST-immune.
+            #
+            # %-H, not %H: [ "09" -ge 9 ] is fine in test(1), but a zero-padded
+            # hour is an invalid octal literal the moment anyone reaches for
+            # arithmetic context here.
+            et_hour=$(TZ=America/New_York date +%-H)
+            # The upper bounds are the point, not padding: a scan is something to
+            # act on, not a record to file. A premarket read at 14:00, or a pulse
+            # after the close, is worse than nothing -- so a backup delayed past
+            # its session's usefulness declines rather than publish a stale card.
+            # Past 16:00 ET nothing is due and the run exits in seconds.
+            if   [ "$et_hour" -ge 14 ] && [ "$et_hour" -lt 16 ]; then session=pulse
+            elif [ "$et_hour" -ge 9 ]  && [ "$et_hour" -lt 14 ]; then session=premarket
+            else session=skip
+            fi
+            dedupe=true
+          fi
           echo "session_type=$session" >> "$GITHUB_OUTPUT"
-          echo "Session type: $session"
+          echo "dedupe=$dedupe" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME  session=$session  dedupe=$dedupe"
 
       - name: Checkout repo (full history)
         if: steps.session.outputs.session_type != 'skip'
@@ -53,27 +114,60 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3.12
+      # The runner has no persistent disk. output/history/ lives in the repo, so
+      # pull it before the scan -- main.py reads it from local disk unchanged.
+      #
+      # This MUST stay ahead of the guard. On a `schedule` event the checkout is
+      # pinned to the SHA from when the event was CREATED, which predates any
+      # commit the primary run pushed since; without this pull the guard would
+      # look at stale history and re-run a session that already happened.
+      - name: Pull latest history from the repo
         if: steps.session.outputs.session_type != 'skip'
+        run: git pull --rebase --autostash origin ${{ github.ref_name }}
+
+      # Cheap, and ahead of the Python setup on purpose: on a normal day this is
+      # the step that ends the backup run, so it should cost seconds, not minutes.
+      - name: Skip session already archived today
+        id: guard
+        if: steps.session.outputs.session_type != 'skip'
+        env:
+          SESSION_TYPE: ${{ steps.session.outputs.session_type }}
+          DEDUPE: ${{ steps.session.outputs.dedupe }}
+        run: |
+          set -euo pipefail
+          if [ "$DEDUPE" != "true" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Dispatched run -- caller is authoritative, no dedupe."
+            exit 0
+          fi
+          # renderer.py archives as <session>_<YYYYmmdd>_<HHMMSS>.html off the
+          # runner's clock, which is UTC. UTC is the correct key here rather than
+          # Eastern: every session window (13:00-20:00 UTC) lands on the same
+          # calendar day in both zones, so the two agree by construction.
+          today=$(date -u +%Y%m%d)
+          if compgen -G "output/history/${SESSION_TYPE}_${today}_*.html" > /dev/null; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "$SESSION_TYPE already archived for $today -- primary trigger ran. Nothing to do."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::No $SESSION_TYPE archive for $today -- the Cloudflare Worker missed its firing. Running catch-up."
+          fi
+
+      - name: Set up Python 3.12
+        if: steps.guard.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
 
       - name: Install dependencies
-        if: steps.session.outputs.session_type != 'skip'
+        if: steps.guard.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # The runner has no persistent disk. output/history/ lives in the repo, so
-      # pull it before the scan — main.py reads it from local disk unchanged.
-      - name: Pull latest history from the repo
-        if: steps.session.outputs.session_type != 'skip'
-        run: git pull --rebase --autostash origin ${{ github.ref_name }}
-
       - name: Run scan
-        if: steps.session.outputs.session_type != 'skip'
+        if: steps.guard.outputs.should_run == 'true'
         env:
           SESSION_TYPE: ${{ steps.session.outputs.session_type }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
@@ -88,7 +182,7 @@ jobs:
         run: python main.py --run now
 
       - name: Commit and push scan output
-        if: steps.session.outputs.session_type != 'skip'
+        if: steps.guard.outputs.should_run == 'true'
         env:
           SESSION_TYPE: ${{ steps.session.outputs.session_type }}
         run: |
