@@ -55,6 +55,96 @@ def _vix_cell(vix: dict) -> dict:
     return {"text": text, "cls": cls}
 
 
+def _tape_cell(day_progress: Optional[dict]) -> dict:
+    """
+    The header's Tape chip: "is today actually a day to be buying?".
+
+    The complaint this answers is that a broad down day was invisible on the page --
+    you had to infer it from the cards, which is exactly backwards. Premarket says so
+    honestly rather than dressing yesterday up as today.
+    """
+    if not day_progress:
+        return {"text": "n/a", "cls": "neutral"}
+
+    if day_progress.get("as_of") == "premarket":
+        prior = day_progress.get("prior_session") or {}
+        pos = prior.get("spy_range_position_pct")
+        text = "Premarket"
+        if pos is not None:
+            text += f" &middot; prior close {pos:.0f}% of range"
+        return {"text": text, "cls": "neutral"}
+
+    tape = day_progress.get("tape", "unknown")
+    breadth = day_progress.get("breadth") or {}
+    green = breadth.get("pct_green")
+    label = {
+        "broad_selloff": "Broad selloff",
+        "soft": "Soft",
+        "mixed": "Mixed",
+        "firm": "Firm",
+        "broad_rally": "Broad rally",
+        "unknown": "Unknown",
+    }.get(tape, tape)
+    cls = {
+        "broad_selloff": "bearish",
+        "soft": "bearish",
+        "firm": "bullish",
+        "broad_rally": "bullish",
+    }.get(tape, "neutral")
+    text = label
+    if green is not None:
+        text += f" &middot; {green:.0f}% green"
+    return {"text": text, "cls": cls}
+
+
+def _zone_pill(card: dict) -> Optional[dict]:
+    """Status pill for a card's entry zone, or None when there is no zone to show."""
+    zone = card.get("entry_zone") or {}
+    if not zone.get("available"):
+        return None
+    if card.get("state") == "watch":
+        hi = zone.get("zone_high")
+        return {
+            "cls": "zone-watch",
+            "text": f"WATCH · trigger {hi:.2f}" if hi is not None else "WATCH",
+        }
+    status = zone.get("status")
+    if status == "in_zone":
+        return {"cls": "zone-in", "text": "IN ZONE"}
+    if status == "extended":
+        d = zone.get("dist_to_zone_pct")
+        return {
+            "cls": "zone-ext",
+            "text": f"EXTENDED {abs(d):.1f}%" if d is not None else "EXTENDED",
+        }
+    if status == "below_zone":
+        return {"cls": "zone-below", "text": "BELOW ZONE"}
+    return None
+
+
+def _zone_caption(card: dict) -> str:
+    """The one-line "what does this band mean for me" under the zone numbers."""
+    zone = card.get("entry_zone") or {}
+    if not zone.get("available"):
+        return "no defined support below"
+    quality = zone.get("quality", "")
+    status = zone.get("status")
+    if status == "in_zone":
+        return f"price is here now · {quality}"
+    if status == "extended":
+        d = zone.get("dist_to_zone_pct")
+        atr = zone.get("dist_to_zone_atr")
+        parts = []
+        if d is not None:
+            parts.append(f"{abs(d):.1f}% below")
+        if atr is not None:
+            parts.append(f"{atr:.1f} ATR")
+        return " · ".join(parts + [quality]) if parts else quality
+    if status == "below_zone":
+        return f"support lost · {quality}"
+    return quality
+
+
 def _streak_badge_html(info: dict) -> str:
     """Inline-styled streak badge (styles inline since the template CSS is fixed)."""
     hits = int(info.get("hits", 0))
@@ -103,6 +193,18 @@ def render(
     now = dt.datetime.now().astimezone()
     session_label = f"{session_name.title()} session"
 
+    # Precompute the zone display bits here rather than in Jinja: the template should
+    # place text, not decide what a zone status means.
+    cards = analysis.get("trade_cards", [])
+    for c in cards:
+        c["zone_pill"] = _zone_pill(c)
+        c["zone_caption"] = _zone_caption(c)
+        # An at-zone ratio earned by a strike that went far OTM is arithmetically
+        # true and practically a lottery ticket. Flag it rather than let the big
+        # number speak for itself.
+        d = (c.get("zone_entry") or {}).get("delta_at_zone")
+        c["zone_rr_is_thin"] = d is not None and d < config.ZONE_MIN_DELTA_AT_ZONE
+
     context = {
         "session_label": session_label,
         "generated_at": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -111,10 +213,11 @@ def render(
             "spy": _macro_cell(macro.get("spy")),
             "qqq": _macro_cell(macro.get("qqq")),
             "vix": _vix_cell(macro.get("vix", {})),
+            "tape": _tape_cell(macro.get("day_progress")),
         },
         "tickers_scanned": tickers_scanned,
         "market_summary": analysis.get("market_summary", ""),
-        "cards": analysis.get("trade_cards", []),
+        "cards": cards,
         "error": analysis.get("error"),
     }
 

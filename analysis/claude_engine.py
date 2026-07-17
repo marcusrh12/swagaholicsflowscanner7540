@@ -25,6 +25,11 @@ logger = logging.getLogger("flowscanner.claude")
 
 _CONFIDENCE_RANK = {"high": 0, "medium": 1}
 
+# ACTIONABLE = clears the option R/R floor at the price you can pay right now.
+# WATCH = the same setup, failing that floor today but clearing it at its entry zone.
+# A watch card is a PLAN with a trigger, never an entry -- see _validate_cards.
+_STATE_RANK = {"actionable": 0, "watch": 1}
+
 
 class ClaudeRefusal(Exception):
     """The model declined the request (stop_reason == "refusal")."""
@@ -174,6 +179,108 @@ def _resolve_contract(
     }
 
 
+def _model_zone_entry(
+    *,
+    record: dict,
+    contract: dict,
+    target: float,
+    model_stop: float,
+    price: float,
+) -> Optional[dict]:
+    """
+    The same trade, bought at its entry zone instead of at the current print.
+
+    THIS IS THE MOST DANGEROUS ARITHMETIC IN THE SCANNER, and it is worth being
+    explicit about why. The zone is frequently built ON `nearest_support`, and the
+    prompt anchors the stop just BELOW `nearest_support`. Feed those two into a
+    reward/risk untouched and entry converges on stop, risk collapses toward zero,
+    and the ratio goes to infinity: every WATCH card passes, the gate becomes a
+    rubber stamp, and the feature makes the scanner strictly worse than not having
+    it. Measured directly: entry 202.00 with a 201.50 stop models option_rr 5.97,
+    and pricing.option_reward_risk does NOT catch it -- its risk<=0.01 refusal is in
+    PREMIUM terms, and a 0.50-point stop still leaves dollars of premium at risk.
+
+    So two guards, and both are load-bearing:
+
+      1. RE-ANCHOR THE STOP under the zone, the way a trader actually would. You do
+         not keep a stop that sits above your entry.
+      2. REFUSE the whole calculation when the resulting stop distance is less than
+         ZONE_MIN_STOP_ATR. A stop that tight is not a stop, it is a rounding error,
+         and the honest output is "unavailable" -- not a spectacular number.
+
+    Returns None when the zone R/R cannot be modelled honestly. None means UNKNOWN,
+    never "fine".
+    """
+    zone = record.get("entry_zone") or {}
+    if not zone.get("available"):
+        return None
+    zone_mid = zone.get("zone_mid")
+    zone_low = zone.get("zone_low")
+    atr14 = (record.get("daily") or {}).get("atr14")
+    if zone_mid is None or zone_low is None or not atr14 or atr14 <= 0:
+        return None
+    if zone_mid <= 0 or zone_mid >= target:
+        return None  # entering above the target is not a trade
+
+    # Guard 1: the stop follows the entry down. Keep the model's stop if it is
+    # already lower -- never RAISE a stop to make the arithmetic look better.
+    stop_below = zone.get("stop_below_zone")
+    if stop_below is None:
+        stop_below = zone_low - config.ZONE_STOP_ATR_BUFFER * atr14
+    zone_stop = min(model_stop, stop_below) if model_stop is not None else stop_below
+    if zone_stop <= 0 or zone_stop >= zone_mid:
+        return None
+
+    # Guard 2: is the risk a real risk?
+    if (zone_mid - zone_stop) < config.ZONE_MIN_STOP_ATR * atr14:
+        logger.info(
+            "%s: zone R/R unavailable -- stop distance %.2f is under %.2f "
+            "(%.2f ATR); refusing to model a risk that isn't one",
+            record.get("symbol"),
+            zone_mid - zone_stop,
+            config.ZONE_MIN_STOP_ATR * atr14,
+            (zone_mid - zone_stop) / atr14,
+        )
+        return None
+
+    premium = pricing.reprice_at_entry(
+        spot_now=price,
+        entry_spot=zone_mid,
+        strike=contract.get("strike"),
+        dte=contract.get("dte"),
+        iv=contract.get("iv"),
+        ask_now=contract.get("ask"),
+    )
+    if premium is None:
+        return None
+
+    opt = pricing.option_reward_risk(
+        strike=contract.get("strike"),
+        ask=contract.get("ask"),
+        iv=contract.get("iv"),
+        dte=contract.get("dte"),
+        price_target=target,
+        stop_level=zone_stop,
+        entry_premium=premium,
+    )
+    if opt is None:
+        return None
+
+    return {
+        "entry_at_zone": zone_mid,
+        "premium_at_zone": premium,
+        # The strike is fixed, so a lower entry is a more OTM contract: the same
+        # trade participates LESS in the move it is waiting for. Surfaced, not
+        # gated -- the point is to stop hiding it.
+        "delta_at_zone": pricing.call_delta(
+            zone_mid, contract.get("strike"), contract.get("dte"), contract.get("iv")
+        ),
+        "stop_at_zone": round(zone_stop, 2),
+        "option_rr_at_zone": opt["option_rr"],
+        "rr_at_zone": round((target - zone_mid) / (zone_mid - zone_stop), 2),
+    }
+
+
 def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
     """Filter, normalize and sort trade cards from the parsed model output."""
     summary = str(parsed.get("market_summary", "")).strip()
@@ -254,14 +361,41 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
             continue
 
         # 3. Reward/risk on the UNDERLYING -- this measures the quality of the thesis.
-        # A card whose rr_ratio didn't parse is a card with no stated edge.
-        rr = _coerce_number(c.get("rr_ratio"))
-        if rr is None or rr < config.MIN_RR_RATIO:
+        #
+        # Entry is OURS, not the model's. It used to be whatever number the model put
+        # in `entry_reference`, coerced and published unchecked -- the only figure on
+        # the card that was never verified, and the denominator of the very ratio
+        # this gate turns on. The entry is the current price; that is not a judgement
+        # call, so there is nothing to delegate.
+        stop = _coerce_number(c.get("stop_level"))
+        price = _coerce_number(record.get("price"))
+        if price is None or stop is None or price <= stop:
             logger.warning(
-                "%s: dropping card -- underlying reward/risk %s below the %.1f floor",
-                ticker,
-                "unparseable" if rr is None else f"{rr:.2f}",
-                config.MIN_RR_RATIO,
+                "%s: dropping card -- entry %s / stop %s cannot define a risk",
+                ticker, price, stop,
+            )
+            continue
+
+        # Recompute rather than trust. The gate ran on the model's STATED ratio, so
+        # an arithmetic slip shipped silently past the floor it was supposed to hit.
+        rr = round((target - price) / (price - stop), 2) if target is not None else None
+        if rr is None:
+            logger.warning("%s: dropping card -- no price target to measure", ticker)
+            continue
+        stated = _coerce_number(c.get("rr_ratio"))
+        if stated is not None and rr > 0 and abs(stated - rr) / rr > config.RR_DIVERGENCE_TOLERANCE:
+            # The numbers it reasoned from are not the numbers it reported. Whatever
+            # the thesis says, it was not derived from this trade.
+            logger.warning(
+                "%s: dropping card -- stated R/R %.2f but entry/stop/target give "
+                "%.2f (>%.0f%% divergence)",
+                ticker, stated, rr, config.RR_DIVERGENCE_TOLERANCE * 100,
+            )
+            continue
+        if rr < config.MIN_RR_RATIO:
+            logger.warning(
+                "%s: dropping card -- underlying reward/risk %.2f below the %.1f floor",
+                ticker, rr, config.MIN_RR_RATIO,
             )
             continue
 
@@ -271,7 +405,6 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
         # worth at the stop), your reward is non-linear in the underlying, and theta
         # is invisible to a price-distance ratio. A 2.4 on the chart can be a losing
         # option when the move takes five weeks instead of two.
-        stop = _coerce_number(c.get("stop_level"))
         opt = pricing.option_reward_risk(
             strike=contract.get("strike"),
             ask=contract.get("ask"),
@@ -279,7 +412,7 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
             dte=contract.get("dte"),
             price_target=target,
             stop_level=stop,
-        ) if (target is not None and stop is not None) else None
+        ) if target is not None else None
 
         if opt is None:
             logger.warning(
@@ -288,24 +421,77 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
                 ticker, target, stop, contract,
             )
             continue
+
+        zone = record.get("entry_zone") or {}
+        zone_entry = _model_zone_entry(
+            record=record,
+            contract=contract,
+            target=target,
+            model_stop=stop,
+            price=price,
+        )
+
+        # THE CRUX. The gate runs on the price you can actually pay RIGHT NOW, and it
+        # does not move. A card that only clears the floor at a price that may never
+        # print is a trade you cannot take dressed as one you can -- exactly what this
+        # function exists to prevent -- so the zone R/R never rescues a card into
+        # "buy this".
+        #
+        # But refusing to compute it throws away the real question ("the thesis is
+        # fine, where should I actually get in?"). So a setup that fails now and
+        # clears at its zone becomes a third thing: a WATCH card, published as a plan
+        # with a trigger price and never as an entry. Every other gate above --
+        # contract-in-chain, target>breakeven, downtrend veto, earnings, underlying
+        # R/R -- has already been applied to it unchanged.
+        state = "actionable"
         if opt["option_rr"] < config.MIN_OPTION_RR:
-            logger.warning(
-                "%s: dropping card -- option reward/risk %.2f below the %.1f floor "
-                "(underlying R/R looked like %.2f)",
-                ticker, opt["option_rr"], config.MIN_OPTION_RR, rr,
-            )
-            continue
+            zone_rr = (zone_entry or {}).get("option_rr_at_zone")
+            zone_delta = (zone_entry or {}).get("delta_at_zone")
+            # The strike was picked for TODAY's price. Down at the zone it may be so
+            # far OTM that its reward/risk only looks good because the premium went to
+            # pennies -- a lottery ticket, not the trade in the thesis. Refuse to
+            # rescue on that basis. This makes the WATCH path STRICTER; it can never
+            # let a card through that would otherwise have been dropped.
+            delta_ok = zone_delta is None or zone_delta >= config.ZONE_MIN_DELTA_AT_ZONE
+            # Only a pullback can rescue it. If price is already IN the zone, the
+            # zone IS the current price and there is no better entry to wait for --
+            # the trade simply doesn't work.
+            if (
+                zone.get("status") == "extended"
+                and zone_rr is not None
+                and zone_rr >= config.MIN_OPTION_RR
+                and delta_ok
+            ):
+                state = "watch"
+                logger.info(
+                    "%s: WATCH -- option R/R %.2f now, %.2f at the %.2f-%.2f zone "
+                    "(trigger %.2f)",
+                    ticker, opt["option_rr"], zone_rr,
+                    zone.get("zone_low"), zone.get("zone_high"), zone.get("zone_high"),
+                )
+            else:
+                logger.warning(
+                    "%s: dropping card -- option reward/risk %.2f below the %.1f "
+                    "floor and no zone rescue (zone status=%s, zone R/R=%s)",
+                    ticker, opt["option_rr"], config.MIN_OPTION_RR,
+                    zone.get("status"), zone_rr,
+                )
+                continue
 
         cards.append(
             {
                 "ticker": ticker,
                 "bias": "calls",
+                "state": state,
                 "confidence": "High" if confidence == "high" else "Medium",
                 "confluence_count": count,
                 "confluence_signals": [str(s) for s in signals],
                 "thesis": str(c.get("thesis", "")).strip(),
                 "contract": contract,
-                "entry_reference": _coerce_number(c.get("entry_reference")),
+                # Ours, from the record -- see the entry gate above.
+                "entry_reference": price,
+                "entry_zone": zone,
+                "zone_entry": zone_entry,
                 "stop_level": stop,
                 "price_target": target,
                 "rr_ratio": rr,          # on the underlying: thesis quality
@@ -317,9 +503,28 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
             }
         )
 
+    # Things you can act on today come first; plans come last.
     cards.sort(
-        key=lambda x: (_CONFIDENCE_RANK[x["confidence"].lower()], -x["confluence_count"])
+        key=lambda x: (
+            _STATE_RANK[x["state"]],
+            _CONFIDENCE_RANK[x["confidence"].lower()],
+            -x["confluence_count"],
+        )
     )
+
+    # A broad selloff can push half the universe out of reach at once. Keep the best
+    # few plans and say what was dropped -- a silent cap reads as "that was all".
+    watch = [c for c in cards if c["state"] == "watch"]
+    if len(watch) > config.MAX_WATCH_CARDS:
+        keep = set(id(c) for c in watch[: config.MAX_WATCH_CARDS])
+        logger.info(
+            "Capping WATCH cards at %s; dropping %s lower-ranked: %s",
+            config.MAX_WATCH_CARDS,
+            len(watch) - config.MAX_WATCH_CARDS,
+            [c["ticker"] for c in watch[config.MAX_WATCH_CARDS :]],
+        )
+        cards = [c for c in cards if c["state"] != "watch" or id(c) in keep]
+
     return summary, cards
 
 

@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from data import structure
+from data import entry_zone, structure
 
 logger = logging.getLogger("flowscanner.fmp")
 
@@ -94,12 +94,74 @@ def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
 
 
+def _vwap(df: pd.DataFrame) -> Optional[float]:
+    """
+    Volume-weighted average price over `df`, on typical price (h+l+c)/3.
+
+    The only volume-weighted level the scanner has. Every other support level it
+    knows (pivots, EMAs) is derived from price alone and so is blind to *where the
+    shares actually changed hands* -- which is exactly what makes VWAP act as
+    support: it is the average participant's cost basis, not a curve fit.
+
+    Returns None rather than a number whenever the weighting would be a lie: no
+    volume column, all-zero volume (a halted or synthetic session), or no usable
+    bars. A volume-weighted average with no volume is just an unweighted mean
+    wearing its name, and it would be scored as confluence at weight 2.0.
+    """
+    if df is None or len(df) == 0:
+        return None
+    if not {"high", "low", "close", "volume"}.issubset(df.columns):
+        return None
+    try:
+        typical = (
+            pd.to_numeric(df["high"], errors="coerce")
+            + pd.to_numeric(df["low"], errors="coerce")
+            + pd.to_numeric(df["close"], errors="coerce")
+        ) / 3.0
+        volume = pd.to_numeric(df["volume"], errors="coerce")
+        ok = typical.notna() & volume.notna() & (volume > 0)
+        if not ok.any():
+            return None
+        total_volume = float(volume[ok].sum())
+        if total_volume <= 0:
+            return None
+        return float((typical[ok] * volume[ok]).sum() / total_volume)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
 def _round(value: Any, digits: int = 2) -> Optional[float]:
     try:
         if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
             return None
         return round(float(value), digits)
     except (TypeError, ValueError):
+        return None
+
+
+def _market_today(hourly: Optional[pd.DataFrame]) -> Optional[dt.date]:
+    """
+    The exchange's current date, read off the data instead of off the wall clock.
+
+    `dt.date.today()` is the runner's LOCAL date, and the scan runs on a UTC CI
+    runner while FMP timestamps are exchange time. Those two agree only because the
+    sessions fire at 09:00 and 14:00 ET (13:00-19:00 UTC, same calendar day). A run
+    after ~20:00 ET -- a manual `--run now`, a retried dispatch -- is already
+    tomorrow in UTC, and every "is this bar today's?" test would flip to False on a
+    bar that is very much today's.
+
+    The newest hourly timestamp is the exchange's own answer, so prefer it and fall
+    back to the local date only when there are no hourly bars at all. Returns None
+    if neither is available -- callers must treat that as "unknown", not "no".
+    """
+    if hourly is not None and len(hourly) and "date" in hourly.columns:
+        try:
+            return hourly["date"].iloc[-1].date()
+        except (AttributeError, IndexError, ValueError):
+            pass
+    try:
+        return dt.date.today()
+    except (OSError, ValueError):  # pragma: no cover -- defensive
         return None
 
 
@@ -314,6 +376,19 @@ class FMPClient:
         return df
 
     async def _hourly_frame(self, symbol: str) -> Optional[pd.DataFrame]:
+        """
+        Recent 1-hour candles, trimmed to HOURLY_LOOKBACK_DAYS.
+
+        The endpoint returns ~3 months unasked (~427 bars for SPY); the cutoff trims
+        that to ~8 sessions. Timestamps are naive and in EXCHANGE time, and the feed
+        carries regular-hours bars only (09:30..15:30 -- verified against the live
+        endpoint), so no premarket filter is needed: an hourly VWAP here is already a
+        regular-session VWAP.
+
+        The `date` column is deliberately kept: it is the only clock in this pipeline
+        that comes from the exchange rather than from the machine running the scan
+        (which is UTC on the CI runner). See `_market_today`.
+        """
         data = await self._get("historical-chart/1hour", {"symbol": symbol})
         if not isinstance(data, list) or not data:
             return None
@@ -454,6 +529,62 @@ class FMPClient:
                 float(hourly["close"].iloc[-1]) if hourly is not None and len(hourly) else None
             )
 
+            # --- Intraday / day-progression -------------------------------- #
+            # FMP's newest DAILY bar updates live during the session, so at the
+            # midday pulse it is today's PARTIAL bar: today's open, today's running
+            # high/low, and a live close. That is a full day-progression read the
+            # scanner was already paying for and discarding.
+            #
+            # Whether that is true right now is a question about the data, never
+            # about the session name -- `--force`, a manual run or a late dispatch
+            # all detach the session label from reality. Compare the bar's own date
+            # to the exchange's date (_market_today).
+            market_today = _market_today(hourly)
+            last_bar_date = daily["date"].iloc[-1].date()
+            bar_is_today = (
+                bool(last_bar_date == market_today) if market_today is not None else None
+            )
+
+            today_open = float(daily["open"].iloc[-1])
+            today_high = float(daily["high"].iloc[-1])
+            today_low = float(daily["low"].iloc[-1])
+
+            # Where in the day's range price sits: 0 = on the lows, 100 = on the
+            # highs. One scalar that says "closing on the lows" without a chart.
+            # A zero-width range (a halt, or a bar with a single print) has no
+            # position to report -- None, not a fabricated 50.
+            day_span = today_high - today_low
+            range_position = (
+                ((last_close - today_low) / day_span) * 100.0 if day_span > 0 else None
+            )
+            ret_from_open = (
+                (last_close / today_open - 1.0) * 100.0 if today_open > 0 else None
+            )
+
+            hourly_today = (
+                hourly[hourly["date"].dt.date == market_today]
+                if hourly is not None and len(hourly) and market_today is not None
+                else None
+            )
+
+            avwap_10d = _vwap(hourly)
+            session_vwap = _vwap(hourly_today)
+
+            struct = structure.build(daily, weekly)
+
+            # Where this setup is worth buying (see data/entry_zone.py). Uses the
+            # frames and levels already computed above -- no extra API calls.
+            zone = entry_zone.build(
+                daily,
+                struct,
+                price=last_close,
+                atr14=_round(atr14.iloc[-1]),
+                emas={"ema8": _round(e8), "ema21": _round(e21), "ema50": _round(e50)},
+                weekly_ema21=_round(w_ema21.iloc[-1]) if len(w_ema21) else None,
+                avwap_10d=avwap_10d,
+                session_vwap=session_vwap,
+            )
+
             return {
                 "symbol": symbol,
                 "price": _round(last_close),
@@ -475,6 +606,16 @@ class FMPClient:
                     "swing_high_20d": _round(swing_high),
                     "swing_low_20d": _round(swing_low),
                     "last_10_closes": [_round(c) for c in close.tail(10).tolist()],
+                    # When bar_is_today is False these describe the PRIOR session --
+                    # still useful, but they mean something different. Emit the raw
+                    # numbers plus the flag and let the aggregator decide; do not
+                    # bake the interpretation in here.
+                    "bar_is_today": bar_is_today,
+                    "today_open": _round(today_open),
+                    "today_high": _round(today_high),
+                    "today_low": _round(today_low),
+                    "ret_from_open_pct": _round(ret_from_open),
+                    "range_position_pct": _round(range_position, 1),
                 },
                 "weekly": {
                     "close": _round(w_close.iloc[-1]) if len(w_close) else None,
@@ -491,10 +632,19 @@ class FMPClient:
                 },
                 # Swing structure from highs/lows (see data/structure.py). Uses the
                 # frames already in hand -- no extra API calls.
-                "structure": structure.build(daily, weekly),
+                "structure": struct,
+                "entry_zone": zone,
                 "hourly": {
                     "last_close": _round(last_hour_close),
                     "bars": int(len(hourly)) if hourly is not None else 0,
+                    # Anchored VWAP over the whole hourly window (~8 sessions): a
+                    # real, volume-weighted level for the entry zone to cluster on.
+                    "avwap_10d": _round(avwap_10d),
+                    # Today's VWAP only. None before the open (no bars today), which
+                    # is the honest premarket answer -- entry_zone simply drops the
+                    # level rather than substituting the 10-day one for it.
+                    "session_vwap": _round(session_vwap),
+                    "bars_today": int(len(hourly_today)) if hourly_today is not None else 0,
                 },
                 "returns": {
                     "ret5": _ret(5),

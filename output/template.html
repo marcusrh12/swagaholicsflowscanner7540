@@ -72,6 +72,23 @@
     .badge.High { background: rgba(63,185,80,0.15); color: var(--high); border: 1px solid var(--high); }
     .badge.Medium { background: rgba(210,153,34,0.15); color: var(--medium); border: 1px solid var(--medium); }
     .badge.count { background: var(--panel-2); color: var(--blue); border: 1px solid var(--border); }
+    /* Entry-zone status. NOTE: these pills must stay AFTER .badge.count in the DOM --
+       renderer._inject_streak_badges anchors on `.badges` being immediately followed
+       by `<span class="badge count">`, and inserts the streak badge right after it. */
+    .badge.zone-in { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
+    .badge.zone-ext { background: rgba(210,153,34,0.15); color: var(--amber); border: 1px solid var(--amber); }
+    .badge.zone-below { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid var(--red); }
+    .badge.zone-watch { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
+    /* A WATCH card is a plan, not a trade -- it must never read as buy-it-now. */
+    .card.watch { border-style: dashed; border-color: var(--blue); opacity: 0.85; }
+    .watch-note {
+      font-size: 12px; color: var(--blue); background: rgba(88,166,255,0.08);
+      border: 1px dashed rgba(88,166,255,0.4); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px;
+    }
+    .metric .v.zone { font-size: 14px; }
+    .metric .v .sub { display: block; font-size: 10px; font-weight: 500; color: var(--muted); margin-top: 1px; }
+    .zone-levels { font-size: 11px; color: var(--muted); margin-top: -4px; margin-bottom: 10px; }
+    .zone-levels .held { color: var(--green); }
     .thesis { font-size: 13.5px; color: var(--text); }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
     .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
@@ -122,6 +139,10 @@
         <div class="v {{ macro.vix.cls }}">{{ macro.vix.text }}</div>
       </div>
       <div class="macro-chip">
+        <div class="k">Tape</div>
+        <div class="v {{ macro.tape.cls }}">{{ macro.tape.text | safe }}</div>
+      </div>
+      <div class="macro-chip">
         <div class="k">Tickers Scanned</div>
         <div class="v">{{ tickers_scanned }}</div>
       </div>
@@ -142,14 +163,26 @@
     {% if cards %}
     <div class="cards">
       {% for c in cards %}
-      <div class="card">
+      <div class="card{% if c.state == 'watch' %} watch{% endif %}">
         <div class="card-head">
           <div class="ticker">{{ c.ticker }}<small>CALLS</small></div>
           <div class="badges">
             <span class="badge count">{{ c.confluence_count }} confluences</span>
+            {#- The zone pill MUST stay after .badge.count: renderer._inject_streak_badges
+                matches on `.badges` followed immediately by the count span, and a pill
+                inserted before it would silently stop every streak badge rendering. -#}
+            {% if c.zone_pill %}<span class="badge {{ c.zone_pill.cls }}">{{ c.zone_pill.text }}</span>{% endif %}
             <span class="badge {{ c.confidence }}">{{ c.confidence }}</span>
           </div>
         </div>
+
+        {% if c.state == 'watch' %}
+        <div class="watch-note">
+          <strong>WATCH — not an entry today.</strong>
+          The setup holds, but the contract only pays at a better price.
+          Trigger: a pullback into <strong>{{ "%.2f"|format(c.entry_zone.zone_high) }}</strong>–{{ "%.2f"|format(c.entry_zone.zone_low) }}.
+        </div>
+        {% endif %}
 
         <div class="thesis">{{ c.thesis }}</div>
 
@@ -167,14 +200,25 @@
 
         <div class="grid2">
           <div class="metric">
-            <div class="k">Entry Ref</div>
-            <div class="v">{{ "%.2f"|format(c.entry_reference) if c.entry_reference is not none else "n/a" }}</div>
+            <div class="k">Entry Zone</div>
+            <div class="v zone">
+              {%- if c.entry_zone and c.entry_zone.available -%}
+                {{ "%.2f"|format(c.entry_zone.zone_low) }}–{{ "%.2f"|format(c.entry_zone.zone_high) }}
+                <span class="sub">{{ c.zone_caption }}</span>
+              {%- else -%}
+                {{ "%.2f"|format(c.entry_reference) if c.entry_reference is not none else "n/a" }}
+                <span class="sub">no defined support below</span>
+              {%- endif -%}
+            </div>
           </div>
           <div class="metric">
             <div class="k">Option R/R</div>
             <div class="v rr">
               {{- "%.2f"|format(c.option_rr) if c.option_rr is not none else "n/a" -}}
-              {%- if c.rr_ratio is not none %} <span style="font-size:11px;color:var(--muted)">(stock {{ "%.1f"|format(c.rr_ratio) }})</span>{% endif -%}
+              {%- if c.zone_entry and c.zone_entry.option_rr_at_zone is not none %}
+              <span style="font-size:11px;color:{{ 'var(--muted)' if c.zone_rr_is_thin else 'var(--blue)' }}">&rarr; {{ "%.2f"|format(c.zone_entry.option_rr_at_zone) }} at zone{% if c.zone_rr_is_thin %}*{% endif %}</span>
+              {%- endif -%}
+              {%- if c.rr_ratio is not none %} <span class="sub">stock {{ "%.1f"|format(c.rr_ratio) }} &middot; entry {{ "%.2f"|format(c.entry_reference) }}</span>{% endif -%}
             </div>
           </div>
           <div class="metric">
@@ -186,6 +230,13 @@
             <div class="v stop">{{ "%.2f"|format(c.stop_level) if c.stop_level is not none else "n/a" }}</div>
           </div>
         </div>
+
+        {% if c.entry_zone and c.entry_zone.available and c.entry_zone.levels %}
+        <div class="zone-levels">
+          Zone: {{ c.entry_zone.levels | join(" &middot; ") | safe }}
+          {%- if c.entry_zone.touches %} &middot; <span class="held">held {{ c.entry_zone.touches }}&times;</span>{% endif %}
+        </div>
+        {% endif %}
 
         <ul class="signals">
           {% for s in c.confluence_signals %}
@@ -199,6 +250,21 @@
           &middot; worth ~{{ "%.2f"|format(c.value_at_target) }} at target,
           ~{{ "%.2f"|format(c.value_at_stop) }} at stop
           <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+        </div>
+        {% endif %}
+
+        {% if c.zone_entry %}
+        <div class="iv">
+          At zone ~{{ "%.2f"|format(c.zone_entry.entry_at_zone) }}: premium
+          ~{{ "%.2f"|format(c.zone_entry.premium_at_zone) }}
+          (vs {{ "%.2f"|format(c.contract.ask) }} now)
+          {%- if c.zone_entry.delta_at_zone is not none %} &middot; delta ~{{ "%.2f"|format(c.zone_entry.delta_at_zone) }}{% endif %}
+          &middot; stop {{ "%.2f"|format(c.zone_entry.stop_at_zone) }}
+          {%- if c.zone_rr_is_thin %}
+          <br /><span style="color:var(--amber)">*this strike is far OTM down there (delta
+          {{ "%.2f"|format(c.zone_entry.delta_at_zone) }}) -- the at-zone ratio is flattered by a
+          near-worthless premium. At that price you would want a nearer strike.</span>
+          {%- endif %}
         </div>
         {% endif %}
 

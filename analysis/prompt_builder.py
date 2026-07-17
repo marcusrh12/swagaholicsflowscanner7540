@@ -50,7 +50,29 @@ one fires (is supportive of a bullish swing):
                        institutional interest".
 6. MACRO ALIGNMENT   - SPY trend, VIX regime (low/normal = supportive; high =
                        headwind; "unknown" means the VIX fetch failed -- treat as
-                       neutral, do not count it as supportive), relative strength vs SPY.
+                       neutral, do not count it as supportive), relative strength vs SPY,
+                       and `macro.day_progress` -- how the session is ACTUALLY trading.
+                       `day_progress.tape` is one of: broad_selloff, soft, mixed, firm,
+                       broad_rally, unknown. Read it TOGETHER with the ticker's own
+                       `daily.ret_from_open_pct`:
+                         * On a `broad_selloff` or `soft` tape, a name holding GREEN is
+                           showing genuine RELATIVE STRENGTH -- that is supportive, and
+                           it is the single most useful thing this block tells you.
+                         * On a `broad_rally`, a green name is NOT evidence of anything:
+                           everything is green. Do NOT fire this category merely because
+                           the tape is up. Ask whether the name is OUTPERFORMING.
+                         * A name falling HARDER than the tape (`ret_from_open_pct` well
+                           below `day_progress.spy.ret_from_open_pct`) is relative
+                           weakness -- a headwind, whatever the daily chart says.
+                       `day_progress.breadth` is the whole scanned universe:
+                       `pct_green`, `pct_above_ema200`, `median_range_position_pct`
+                       (0 = the universe is closing on its lows). Two index chips cannot
+                       tell a mega-cap-led tape from a broad one; this can.
+                       `tape: "unknown"` with `as_of: "premarket"` means THE SESSION HAS
+                       NOT OPENED YET -- treat it as neutral, exactly like an unknown
+                       VIX. It is not bearish. In that case `day_progress.prior_session`
+                       describes yesterday's close instead; it is context for the open,
+                       not a read on today.
 7. MARKET STRUCTURE  - the `structure` block (daily + weekly), derived from swing
                        highs/lows rather than closes. It fires when price action is
                        constructive: higher highs AND higher lows on the daily, a
@@ -60,6 +82,10 @@ one fires (is supportive of a bullish swing):
                        out. `at_lookback_highs` means no confirmed pivot sits above
                        price -- price is at the highs, which is constructive, not a
                        missing value.
+                       Also read `entry_zone.status`: "below_zone" means price has lost
+                       the support confluence it was built on. That is a NEGATIVE for
+                       this category -- do not read it as neutral. (It is not a veto on
+                       its own; the downtrend rule below already covers distribution.)
 
 RULES:
 - Count how many of the seven categories fire for each ticker.
@@ -127,10 +153,34 @@ RULES:
   no overhead pivot, so project with ATR (e.g. entry + 2-3x `daily.atr14`). Note that
   `range_high` / `range_low` are present ONLY when `in_consolidation` is true; if the
   field is absent there is no valid range and no measured move to take.
+- THE ENTRY ZONE IS COMPUTED FOR YOU. DO NOT INVENT ONE. Each ticker carries an
+  `entry_zone` block: `zone_low`/`zone_high` (a band where independent support levels
+  agree), `status`, `quality`, `touches` (how many times price came DOWN into that band
+  and closed back above it -- evidence it actually holds), and `levels` (what agrees
+  there). You must NOT restate it with different numbers, widen it, or propose your own
+  "better entry". It is derived from the same data you are reading, deterministically.
+  Use it to describe WHERE the trade is worth taking:
+    * `status: "in_zone"`   -- price is at support NOW. Say so.
+    * `status: "extended"`  -- price is ABOVE the zone; buying here is CHASING. Say that
+      plainly, and say how far (`dist_to_zone_pct`, `dist_to_zone_atr`). This is the
+      single most important thing to be honest about. A setup can be real and still be
+      a bad entry today.
+    * `status: "below_zone"` -- the support confluence has failed (see category 7).
+    * `available: false` / `status: "none"` -- no defined pullback support within range.
+      That is normal for a name at new highs. Say "no defined support below" rather than
+      inventing a level; it is useful information, not a gap to fill.
+  A zone that is `weak` is not a reason to drop a setup -- breakout names legitimately
+  have no support beneath them. It is a reason to say so.
 - RR_RATIO: compute it from the levels you actually chose --
-  (price_target - entry_reference) / (entry_reference - stop_level). Do not state a
-  reward/risk you have not derived from those two structural levels. If the result is
-  below {config.MIN_RR_RATIO}, the setup is not worth the premium: drop the card.
+  (price - stop_level) is your risk and (price_target - price) your reward, where
+  `price` is the ticker's CURRENT price. Entry is always the current price; do not use
+  the entry zone as your entry for this number. Do not state a reward/risk you have not
+  derived from those structural levels. If the result is below {config.MIN_RR_RATIO},
+  the setup is not worth the premium: drop the card.
+  This value is RECOMPUTED from your `stop_level` and `price_target` after you return.
+  If your stated `rr_ratio` disagrees with the recomputed one by more than
+  {int(config.RR_DIVERGENCE_TOLERANCE * 100)}%, the card is DISCARDED -- not corrected.
+  Do the arithmetic.
 - THE OPTION'S REWARD/RISK IS THE REAL GATE, AND IT IS COMPUTED FOR YOU. After you
   return a card, the contract is priced (Black-Scholes) at your `price_target` and at
   your `stop_level`, midway through its life. Reward is its modelled value at the
@@ -141,6 +191,17 @@ RULES:
   or a short `dte` that theta will eat, will all fail this gate. Prefer a target that
   clears breakeven with room, a stop that is structurally tight, and a delta in the
   0.45-0.70 band where the contract actually participates in the move.
+- WATCH CARDS. If a card fails that option R/R gate at the CURRENT price but would
+  clear it bought at its entry zone, it is not discarded -- it is published as a WATCH
+  card: a plan with a trigger price, not an entry. This is decided AFTER you return,
+  in code; you do not choose it and must not label cards yourself. What it means for
+  you: when `entry_zone.status` is "extended", write a thesis that still reads honestly
+  if the card turns out to be a plan rather than a trade. Say where the setup becomes
+  worth taking -- e.g. "setup intact, but 4.9% extended; the premium only works back at
+  the 322.30-326.18 shelf, which has held 3 times". Never write "buy now", "enter here"
+  or similar on an extended name.
+  Note the gate itself does NOT move: the zone can turn a rejected card into a WATCH
+  card, but it can never turn a failing card into an actionable one.
 
 OUTPUT CONTRACT (STRICT):
 Return ONLY a single JSON object, no prose, no markdown fences. Schema:
@@ -163,7 +224,6 @@ Return ONLY a single JSON object, no prose, no markdown fences. Schema:
         "breakeven": <number, the chosen candidate's `breakeven` as given>,
         "open_interest": <integer, the chosen candidate's `open_interest` as given>
       }},
-      "entry_reference": <current price used as entry reference, number>,
       "stop_level": <price where thesis is structurally invalidated, number>,
       "price_target": <technically-derived target, number>,
       "rr_ratio": <reward/risk on the UNDERLYING, from your target and stop, e.g. 2.4>,
@@ -174,6 +234,15 @@ Return ONLY a single JSON object, no prose, no markdown fences. Schema:
 
 If no setups qualify, return {{"market_summary": "...", "trade_cards": []}}.
 Every number must be a JSON number (no quotes, no % signs, no $ signs).
+
+Do NOT emit `entry_reference` or `entry_zone`. Both are set in code from the same data
+you are reading -- the entry is the current price, which is not a judgement call, and
+the zone is computed deterministically. A number you supply there would be overwritten
+at best and wrong at worst.
+
+`market_summary` should state the tape honestly, using `macro.day_progress`: on a
+`broad_selloff` say so and say what that means for entries. If `as_of` is "premarket",
+do not describe today's session -- it has not happened.
 
 Keep the prose tight: each entry in `confluence_signals` is ONE short clause naming
 the category and the evidence (e.g. "Market structure: daily HH/HL, coiled 1.5% under
@@ -204,12 +273,33 @@ def _format_repeat_history(repeat_history: dict) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+# Entry-zone fields the PAGE renders but the model has no decision to make with.
+# Dropped from the payload because they cost tokens across every scanned ticker and
+# CLAUDE_MAX_TOKENS is already a known failure surface here -- 12000 truncated the JSON
+# mid-card and lost a whole scan (see config). `levels` in particular is a list of
+# formatted strings per ticker, purely for the card's provenance caption.
+_ZONE_FIELDS_FOR_RENDER_ONLY = ("levels", "score", "anchors", "stop_below_zone")
+
+
+def _slim_zone(ticker: dict) -> dict:
+    """Strip render-only entry_zone fields from one ticker record for the model."""
+    zone = ticker.get("entry_zone")
+    if not isinstance(zone, dict) or not zone:
+        return ticker
+    slim = {k: v for k, v in zone.items() if k not in _ZONE_FIELDS_FOR_RENDER_ONLY}
+    return {**ticker, "entry_zone": slim}
+
+
 def build_messages(payload: dict) -> tuple[str, str]:
     """Return (system_prompt, user_message_json_string)."""
     # Repeat-ticker history is passed alongside the payload (injected by main);
     # pull it out so it renders as a readable context block rather than raw JSON.
     repeat_history = payload.get("repeat_history") or {}
     payload_for_model = {k: v for k, v in payload.items() if k != "repeat_history"}
+    if payload_for_model.get("tickers"):
+        payload_for_model["tickers"] = [
+            _slim_zone(t) for t in payload_for_model["tickers"]
+        ]
 
     user_content = (
         "Analyze the following scan payload and return trade cards per the output "

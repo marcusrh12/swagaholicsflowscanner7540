@@ -75,6 +75,53 @@ def call_price(spot: float, strike: float, dte_days: float, iv: float) -> Option
     return round(max(0.0, value), 2)
 
 
+def reprice_at_entry(
+    *,
+    spot_now: float,
+    entry_spot: float,
+    strike: float,
+    dte: int,
+    iv: float,
+    ask_now: float,
+) -> Optional[float]:
+    """
+    What this contract would cost if the underlying were at `entry_spot` instead of
+    `spot_now` -- calibrated so the model reproduces the REAL ask at today's price.
+
+    Why not just call call_price(entry_spot, ...): that returns a MODEL price, and
+    comparing it to the quoted `ask` compares a model to a market. The gap between
+    them is the bid/ask spread plus the volatility smile, and it is not small. A raw
+    Black-Scholes "premium at the zone" set against a real ask would show a premium
+    improvement that is partly just model error -- and that error would land directly
+    in the reward/risk that decides whether a card ships.
+
+    So price the DIFFERENCE and keep the level honest: take the residual
+    (ask_now - model_now) as the market's standing correction for this contract and
+    carry it, unchanged, to the zone. Crude -- the smile is not constant in spot --
+    but it makes the two premiums commensurable, which is the entire requirement.
+    Exact at the anchor: entry_spot == spot_now returns ask_now.
+
+    Time is deliberately NOT advanced. A real pullback takes days, so you would
+    actually buy a cheaper option with less life left; holding dte fixed OVERSTATES
+    the zone premium, which lowers reward and raises risk. That is conservative in
+    the direction that matters -- it cannot manufacture a passing card.
+    """
+    if any(v is None for v in (spot_now, entry_spot, strike, dte, iv, ask_now)):
+        return None
+    if ask_now <= 0 or iv <= 0 or dte <= 0 or spot_now <= 0 or entry_spot <= 0:
+        return None
+
+    model_now = call_price(spot_now, strike, dte, iv)
+    model_at_entry = call_price(entry_spot, strike, dte, iv)
+    if model_now is None or model_at_entry is None:
+        return None
+
+    residual = ask_now - model_now
+    # A contract cannot be worth less than nothing, and a premium rounded to zero
+    # would divide the reward/risk by ~0 and print a spectacular ratio.
+    return round(max(0.01, model_at_entry + residual), 2)
+
+
 def option_reward_risk(
     *,
     strike: float,
@@ -83,6 +130,7 @@ def option_reward_risk(
     dte: int,
     price_target: float,
     stop_level: float,
+    entry_premium: Optional[float] = None,
 ) -> Optional[dict]:
     """
     Model what the CONTRACT is worth if the thesis plays out, and if it fails.
@@ -98,10 +146,19 @@ def option_reward_risk(
     Assumes IV is unchanged at both levels. Real IV usually FALLS after a breakout,
     so the reward side is, if anything, flattered -- state that, don't hide it.
     Returns None when the inputs can't support a model.
+
+    `entry_premium` overrides what you PAY (and therefore what you risk) without
+    touching the target/stop valuations: it models the same contract bought at a
+    different entry -- see reprice_at_entry. Defaults to `ask`, which is the
+    buy-it-now case and leaves every existing caller unchanged.
     """
     if not all(v is not None for v in (strike, ask, iv, dte, price_target, stop_level)):
         return None
     if ask <= 0 or iv <= 0 or dte <= 0:
+        return None
+
+    paid = ask if entry_premium is None else entry_premium
+    if paid <= 0:
         return None
 
     remaining = dte * (1.0 - config.OPTION_RR_TIME_FRACTION)
@@ -110,8 +167,8 @@ def option_reward_risk(
     if at_target is None or at_stop is None:
         return None
 
-    reward = at_target - ask
-    risk = ask - at_stop
+    reward = at_target - paid
+    risk = paid - at_stop
     if risk <= 0.01:
         # The model says the option is worth ~what you paid even at the stop. That is
         # not a real risk estimate (deep ITM, or a stop that isn't a stop) -- refuse

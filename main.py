@@ -382,6 +382,20 @@ async def run_scan(session_name: str, force: bool = False) -> None:
     logger.info("Assembled %s ticker records", tickers_scanned)
 
     macro = aggregator.build_macro_context(macro_fmp, vix_data)
+    # How the session is actually trading, plus real breadth across everything just
+    # scanned. Attached to `macro` rather than threaded separately: `macro` already
+    # reaches both the model (assemble_payload) and the page (renderer.render), so
+    # this needs no new call sites. `records` is built above, so ordering works.
+    breadth = aggregator.build_breadth(records)
+    macro["day_progress"] = aggregator.build_day_progress(macro_fmp, breadth, vix_data)
+    logger.info(
+        "Tape: %s (as_of=%s, %s%% green, universe %s)",
+        macro["day_progress"].get("tape"),
+        macro["day_progress"].get("as_of"),
+        breadth.get("pct_green"),
+        breadth.get("universe_size"),
+    )
+
     payload = aggregator.assemble_payload(session_name, records, macro)
 
     # Day-over-day streak context: how recently/repeatedly each ticker has surfaced.

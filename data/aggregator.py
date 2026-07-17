@@ -14,9 +14,34 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import statistics
 from typing import Optional
 
+import config
+
 logger = logging.getLogger("flowscanner.aggregator")
+
+
+def _pct_true(values: list[Optional[bool]]) -> Optional[float]:
+    """
+    Percentage of KNOWN values that are True.
+
+    None is not False. data/fmp.py deliberately emits None for "this ticker has no
+    EMA200 yet" so that unknown stays distinguishable from bearish; counting those
+    Nones in the denominator would silently drag breadth down every time the rotate
+    list picks up a recent listing. Unknown ticker -> excluded, not counted against.
+    """
+    known = [v for v in values if v is not None]
+    if not known:
+        return None
+    return round(sum(1 for v in known if v) / len(known) * 100.0, 1)
+
+
+def _median(values: list[Optional[float]]) -> Optional[float]:
+    known = [v for v in values if v is not None]
+    if not known:
+        return None
+    return round(statistics.median(known), 2)
 
 
 def _days_until(date_iso: Optional[str]) -> Optional[int]:
@@ -70,6 +95,136 @@ def build_macro_context(
     return macro
 
 
+def build_breadth(records: list[dict]) -> dict:
+    """
+    What the WHOLE scanned universe is doing -- the scanner's only true breadth.
+
+    Costs nothing: `price_above_ema200` and `ema_stack_bullish` are already computed
+    for all ~50-60 names every session and were simply thrown away. Two SPY chips
+    cannot tell a mega-cap-led tape from a broad one; 60 names can.
+    """
+    if not records:
+        return {"available": False}
+
+    dailies = [r.get("daily") or {} for r in records]
+    ret_from_open = [d.get("ret_from_open_pct") for d in dailies]
+
+    # Is this today's session or yesterday's close? Decide by MAJORITY, never on one
+    # ticker: a single stale or halted name must not flip the label for the page.
+    flags = [d.get("bar_is_today") for d in dailies if d.get("bar_is_today") is not None]
+    intraday = bool(flags) and sum(1 for f in flags if f) > len(flags) / 2
+
+    return {
+        "available": True,
+        "universe_size": len(records),
+        "pct_above_ema200": _pct_true([d.get("price_above_ema200") for d in dailies]),
+        "pct_ema_stack_bullish": _pct_true([d.get("ema_stack_bullish") for d in dailies]),
+        "pct_green": _pct_true([(v > 0) if v is not None else None for v in ret_from_open]),
+        "median_ret_from_open_pct": _median(ret_from_open),
+        "median_range_position_pct": _median([d.get("range_position_pct") for d in dailies]),
+        "as_of": "intraday" if intraday else "prior_close",
+    }
+
+
+def _classify_tape(spy_ret_from_open: Optional[float], pct_green: Optional[float]) -> str:
+    """
+    One deterministic label for the tape. Computed here, in Python, for the same
+    reason every other number on the card is: so it cannot drift with the prose.
+
+    The extreme labels need BOTH the index move and participation to agree. SPY down
+    0.9% on a mega-cap unwind while 60% of the universe is green is not a selloff,
+    and calling it one would veto perfectly good setups.
+    """
+    if spy_ret_from_open is None:
+        return "unknown"
+    if (
+        spy_ret_from_open <= config.TAPE_SELLOFF_SPY_PCT
+        and pct_green is not None
+        and pct_green < config.TAPE_SELLOFF_BREADTH_PCT
+    ):
+        return "broad_selloff"
+    if (
+        spy_ret_from_open >= config.TAPE_RALLY_SPY_PCT
+        and pct_green is not None
+        and pct_green > config.TAPE_RALLY_BREADTH_PCT
+    ):
+        return "broad_rally"
+    if spy_ret_from_open < config.TAPE_SOFT_SPY_PCT:
+        return "soft"
+    if spy_ret_from_open > config.TAPE_FIRM_SPY_PCT:
+        return "firm"
+    return "mixed"
+
+
+def _index_progress(data: Optional[dict]) -> dict:
+    """Day-progression numbers for one index, or {"available": False}."""
+    if not data:
+        return {"available": False}
+    d = data.get("daily") or {}
+    h = data.get("hourly") or {}
+    close = d.get("close")
+    svwap = h.get("session_vwap")
+    return {
+        "available": True,
+        "bar_is_today": d.get("bar_is_today"),
+        "ret_from_open_pct": d.get("ret_from_open_pct"),
+        "range_position_pct": d.get("range_position_pct"),
+        "vs_session_vwap_pct": (
+            round((close / svwap - 1.0) * 100.0, 2)
+            if close and svwap and svwap > 0
+            else None
+        ),
+    }
+
+
+def build_day_progress(
+    macro_fmp: dict[str, Optional[dict]], breadth: dict, vix: dict
+) -> dict:
+    """
+    How the session is actually trading -- the context a card needs before it says
+    "buy this now".
+
+    THE HONEST PART: the premarket scan runs at 09:00 ET. There is no day to report
+    on yet, and the correct answer is to say so rather than to dress yesterday's bar
+    up as today's tape. So this reports `as_of: "premarket"`, `tape: "unknown"`, and
+    hands over the PRIOR session instead -- "yesterday closed at 9% of its range with
+    22% of the universe green" is genuinely predictive of the open and is the best
+    thing that can truthfully be said before the bell.
+
+    Which branch applies is decided by the DATA (bar_is_today), never by the session
+    name: --force, a manual run or a late dispatch all detach the label from reality.
+    """
+    spy = _index_progress(macro_fmp.get("SPY"))
+    qqq = _index_progress(macro_fmp.get("QQQ"))
+
+    live = spy.get("bar_is_today") is True and breadth.get("as_of") == "intraday"
+    spy_ret = spy.get("ret_from_open_pct")
+    pct_green = breadth.get("pct_green")
+
+    out = {
+        "as_of": "intraday" if live else "premarket",
+        "spy": spy,
+        "qqq": qqq,
+        "vix_change_pct": (vix or {}).get("change_pct"),
+        "breadth": breadth,
+    }
+
+    if live:
+        out["tape"] = _classify_tape(spy_ret, pct_green)
+        return out
+
+    # Before the open: the newest daily bar IS the prior session. Same numbers, a
+    # different meaning -- so give them a different name rather than a tape label.
+    out["tape"] = "unknown"
+    out["prior_session"] = {
+        "spy_ret_from_open_pct": spy_ret,
+        "spy_range_position_pct": spy.get("range_position_pct"),
+        "pct_green": pct_green,
+        "median_range_position_pct": breadth.get("median_range_position_pct"),
+    }
+    return out
+
+
 def build_ticker_record(
     fmp_data: dict,
     uw_data: dict,
@@ -105,6 +260,7 @@ def build_ticker_record(
         "daily": fmp_data["daily"],
         "weekly": fmp_data["weekly"],
         "structure": fmp_data.get("structure", {}),
+        "entry_zone": fmp_data.get("entry_zone", {}),
         "hourly": fmp_data["hourly"],
         "relative_strength": rs,
         "options": {

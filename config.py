@@ -149,6 +149,83 @@ CONSOLIDATION_MIN_BARS_DAILY = 8      # a range needs at least this many bars
 CONSOLIDATION_MIN_BARS_WEEKLY = 4
 
 # --------------------------------------------------------------------------- #
+# Entry zone (data/entry_zone.py)
+# --------------------------------------------------------------------------- #
+# The card used to say "entry = current price", which is not a decision -- it is
+# whatever the clock happened to print. The zone is instead a BAND where several
+# independent support levels agree, scored by how much each level means and by
+# whether price has actually held there before.
+ZONE_MAX_DEPTH_ATR = 3.0              # deeper than this is a different trade, not a pullback
+ZONE_TOL_PCT = 0.35                   # cluster tolerance: % of price ...
+ZONE_TOL_ATR = 0.5                    # ... or ATRs, whichever is WIDER
+ZONE_MIN_HALF_WIDTH_ATR = 0.25        # a lone level is widened into a real band
+ZONE_IN_ZONE_BUFFER_ATR = 0.25        # price within this of the top still counts as in-zone
+
+# Level weights. Pivots outrank moving averages because a pivot is where the market
+# actually turned, while an EMA is a curve that happens to pass nearby.
+ZONE_WEIGHTS = {
+    "pivot": 3.0,                     # daily/weekly confirmed pivot low
+    "range": 2.5,                     # consolidation range low
+    "ema": 2.0,                       # EMA21/50 daily, EMA21 weekly (EMA8 = 1.0, see below)
+    "vwap": 2.0,                      # 10-day anchored VWAP
+    "prior_day": 1.5,                 # prior session low
+    "session_vwap": 1.5,              # today's VWAP -- coarse from hourly bars
+    "ema_fast": 1.0,                  # EMA8: too quick to be structure on its own
+}
+
+# ANCHOR families exist independently of where price happens to be today -- a pivot
+# from March does not move because this morning gapped. CONFIRMING families are near
+# price BY CONSTRUCTION every single day: today's VWAP, yesterday's low and the EMA8
+# are always within a bar or two of the last print.
+#
+# Left uncapped, those three contribute a free 4.0 to whatever band sits at the
+# current price, which manufactures a "strong" zone around price for every ticker --
+# and a zone that tracks price cannot tell "extended" from "at support", which is the
+# entire question. They may CONFIRM a level; they may not CREATE one.
+ZONE_ANCHOR_FAMILIES = ("pivot", "range", "ema", "vwap")
+ZONE_CONFIRMING_MAX = 1.5             # all confirming families together, at most this
+
+ZONE_TOUCH_WEIGHT = 0.75              # per historical hold ...
+ZONE_MAX_TOUCHES_SCORED = 3           # ... capped here
+ZONE_STRONG_SCORE = 5.5
+ZONE_MODERATE_SCORE = 3.5
+ZONE_STRONG_MIN_ANCHORS = 3           # "strong" needs independent STRUCTURAL agreement
+
+# Stop handling at the zone. Both of these exist to stop the zone R/R from being
+# manufactured: the zone often sits ON nearest_support, and the model's stop is
+# anchored just BELOW nearest_support, so entry and stop converge, risk collapses
+# toward zero and the modelled reward/risk goes to infinity. See claude_engine.
+ZONE_STOP_ATR_BUFFER = 0.75           # a zone stop sits this far under zone_low
+ZONE_MIN_STOP_ATR = 0.5               # below this, zone R/R is UNAVAILABLE, not excellent
+
+# The strike is chosen for TODAY's price (the prompt steers to delta 0.45-0.70). At a
+# zone several ATR lower that same strike is far OTM, so its premium collapses and the
+# modelled reward/risk balloons -- JPM measured 2.99 now vs 11.49 at a zone where the
+# contract's delta was 0.21. The ratio is arithmetically right and practically a lie:
+# at 0.21 delta you are holding a lottery ticket that barely participates in the move
+# you waited for, and at that price you would buy a different strike anyway.
+#
+# This bites WATCH cards STRUCTURALLY, not occasionally -- a watch card is by
+# definition extended above its zone, so its delta is always the depressed one. Used
+# ONLY to refuse the WATCH rescue (a tightening) and to caption the number honestly.
+# Never applied to a card that already passes at the current price.
+ZONE_MIN_DELTA_AT_ZONE = 0.35
+
+# --------------------------------------------------------------------------- #
+# Day progression / breadth (data/aggregator.py)
+# --------------------------------------------------------------------------- #
+# "How is the day actually going?" -- a question the scanner could not answer, so a
+# name could be surfaced as a fresh long into a tape that was selling off wholesale.
+# A selloff is not one index printing red: it is the index red AND participation
+# collapsing. Requiring both keeps a mega-cap-led dip from reading as a rout.
+TAPE_SELLOFF_SPY_PCT = -0.75          # SPY this far from the open ...
+TAPE_SELLOFF_BREADTH_PCT = 30.0       # ... AND fewer than this % of the universe green
+TAPE_RALLY_SPY_PCT = 0.75
+TAPE_RALLY_BREADTH_PCT = 70.0
+TAPE_SOFT_SPY_PCT = -0.25             # drifting lower, but not a rout
+TAPE_FIRM_SPY_PCT = 0.25
+
+# --------------------------------------------------------------------------- #
 # Options / flow parameters
 # --------------------------------------------------------------------------- #
 MIN_FLOW_PREMIUM = 50_000             # unusual flow alerts must exceed this premium ($)
@@ -194,6 +271,19 @@ CONFLUENCE_CATEGORY_COUNT = 7         # kept in sync with the rubric in prompt_b
 # the target, and theta is priced in. A great chart can still be a bad call.
 MIN_RR_RATIO = 1.5
 MIN_OPTION_RR = 1.5
+
+# The model states an rr_ratio; Python recomputes it from entry/stop/target. They
+# should agree -- this is a tripwire for an arithmetic slip, not a style preference.
+# The gate runs on the COMPUTED value regardless; a card whose stated ratio is this
+# far off is dropped outright, because if the arithmetic is wrong the thesis behind
+# it is not trustworthy either.
+RR_DIVERGENCE_TOLERANCE = 0.15        # 15%
+
+# WATCH cards: setups that FAIL the option R/R gate at the current price but clear it
+# at their entry zone. They are published as plans with a trigger price, never as
+# buy-it-now. Capped because a red tape can put half the universe out of reach at
+# once, and a page of things you cannot do today is noise.
+MAX_WATCH_CARDS = 3
 
 # The thesis is assumed to play out partway through the contract's life rather than
 # on expiration day -- a swing that needs every last day to work is not the trade you
