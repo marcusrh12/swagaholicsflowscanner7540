@@ -302,6 +302,13 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
         signals = c.get("confluence_signals") or []
         if not isinstance(signals, list):
             signals = [str(signals)]
+
+        # Caution flags: 1-4 "weigh this" warnings. Coerce to a clean list of strings
+        # and cap at 4 so a runaway list can't blow out the card. Empty is fine.
+        cautions = c.get("cautions") or []
+        if not isinstance(cautions, list):
+            cautions = [str(cautions)]
+        cautions = [str(x).strip() for x in cautions if str(x).strip()][:4]
         count = c.get("confluence_count")
         try:
             count = int(count)
@@ -486,6 +493,7 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
                 "confidence": "High" if confidence == "high" else "Medium",
                 "confluence_count": count,
                 "confluence_signals": [str(s) for s in signals],
+                "cautions": cautions,
                 "thesis": str(c.get("thesis", "")).strip(),
                 "contract": contract,
                 # Ours, from the record -- see the entry gate above.

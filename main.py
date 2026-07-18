@@ -25,7 +25,7 @@ import aiohttp
 import config
 import scheduler
 from analysis.claude_engine import ClaudeEngine
-from data import aggregator
+from data import aggregator, sector_etf
 from data.fmp import FMPClient
 from data.unusual_whales import UnusualWhalesClient
 from data.vix import get_vix
@@ -354,10 +354,22 @@ async def run_scan(session_name: str, force: bool = False) -> None:
         screener_by_symbol = {r["symbol"]: r for r in universe}
         symbols = list(screener_by_symbol.keys())
 
-        # Fetch per-ticker data concurrently (rate-limited internally).
-        results = await asyncio.gather(
-            *[_fetch_one(fmp, uw, sym) for sym in symbols]
+        # Resolve each scanned name to its sector ETF, then fetch the DISTINCT set of
+        # ETFs once (a dozen symbols at most, shared across the whole universe) rather
+        # than per ticker. Fetched via the same get_ticker_data path as SPY/QQQ so the
+        # ETF carries EMAs and returns for the sector-context read.
+        etf_by_symbol = {
+            sym: sector_etf.etf_for(row.get("sector"), row.get("industry"))
+            for sym, row in screener_by_symbol.items()
+        }
+        needed_etfs = sorted({e for e in etf_by_symbol.values() if e})
+
+        # Per-ticker data and sector-ETF data concurrently (both rate-limited internally).
+        results, etf_results = await asyncio.gather(
+            asyncio.gather(*[_fetch_one(fmp, uw, sym) for sym in symbols]),
+            asyncio.gather(*[fmp.get_ticker_data(e) for e in needed_etfs]),
         )
+        sector_etf_data = dict(zip(needed_etfs, etf_results))
 
     # SPY returns for relative-strength math.
     spy_data = macro_fmp.get("SPY") or {}
@@ -369,12 +381,15 @@ async def run_scan(session_name: str, force: bool = False) -> None:
         if fmp_data is None:
             logger.info("Skipping %s (no usable price data)", symbol)
             continue
+        etf_symbol = etf_by_symbol.get(symbol)
         record = aggregator.build_ticker_record(
             fmp_data=fmp_data,
             uw_data=uw_data,
             earnings_date=earnings_map.get(symbol),
             spy_returns=spy_returns,
             screener_row=screener_by_symbol.get(symbol),
+            sector_etf_symbol=etf_symbol,
+            sector_etf_data=sector_etf_data.get(etf_symbol) if etf_symbol else None,
         )
         records.append(record)
 

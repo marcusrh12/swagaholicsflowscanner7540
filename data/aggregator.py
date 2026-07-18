@@ -18,6 +18,7 @@ import statistics
 from typing import Optional
 
 import config
+from data import sector_etf
 
 logger = logging.getLogger("flowscanner.aggregator")
 
@@ -231,6 +232,8 @@ def build_ticker_record(
     earnings_date: Optional[str],
     spy_returns: dict,
     screener_row: Optional[dict] = None,
+    sector_etf_symbol: Optional[str] = None,
+    sector_etf_data: Optional[dict] = None,
 ) -> dict:
     """Merge one ticker's sources into a single compact record."""
     symbol = fmp_data["symbol"]
@@ -263,6 +266,15 @@ def build_ticker_record(
         "entry_zone": fmp_data.get("entry_zone", {}),
         "hourly": fmp_data["hourly"],
         "relative_strength": rs,
+        # How the ticker's own sector ETF is trading -- context for the caution layer.
+        # A bullish name inside a rolling-over sector is a real setup with a real
+        # headwind; `stock_diverging_from_weak_sector` is the flag that says so.
+        "sector_context": sector_etf.build_sector_context(
+            etf_symbol=sector_etf_symbol,
+            etf_data=sector_etf_data,
+            spy_returns=spy_returns,
+            stock_daily=fmp_data["daily"],
+        ),
         "options": {
             "iv": uw_data.get("iv"),
             "iv_rank": uw_data.get("iv_rank"),

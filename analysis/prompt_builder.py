@@ -73,6 +73,17 @@ one fires (is supportive of a bullish swing):
                        VIX. It is not bearish. In that case `day_progress.prior_session`
                        describes yesterday's close instead; it is context for the open,
                        not a read on today.
+                       Also read `sector_context` -- how the ticker's OWN sector ETF
+                       (e.g. XLK for tech, SMH for semis, XLE for energy) is trading:
+                       its `trend` (uptrend/downtrend/mixed off its 21/50 EMA), `ret5`,
+                       `ret20`, `ret20_vs_spy` (positive = the group is leading the
+                       market), and `stock_diverging_from_weak_sector` (this name is
+                       bullish while its group is rolling over or lagging). A setup
+                       whose sector is leading gets a tailwind here; one diverging from
+                       a weak sector still can fire, but it is swimming upstream -- note
+                       it, and it MUST become a caution (see the cautions rule below).
+                       `available: false` means no sector read (unmapped or a fetch
+                       miss) -- treat as neutral, not bearish.
 7. MARKET STRUCTURE  - the `structure` block (daily + weekly), derived from swing
                        highs/lows rather than closes. It fires when price action is
                        constructive: higher highs AND higher lows on the daily, a
@@ -133,6 +144,14 @@ RULES:
   to return the premium paid. If your `price_target` is at or below the chosen
   contract's `breakeven`, the trade loses money even when the thesis plays out --
   pick a nearer strike or drop the setup.
+- THESIS -- WHAT HAPPENS NEXT. Every thesis must END with a plain-language
+  "what happens next" statement in two halves: (a) what price action CONFIRMS the
+  setup is working -- a specific level and condition, e.g. "a daily close above 148.20
+  confirms the breakout and opens the measured move to 156"; and (b) what would signal
+  it FAILING -- e.g. "a close back under 141.50 says the base has cracked and the trade
+  is wrong". Use the same structural levels you chose for target and stop; the reader
+  should finish the thesis knowing exactly what to watch for, in both directions,
+  without prior technical knowledge.
 - STREAK / REPEAT TICKERS: For any ticker that appears in the REPEAT TICKER HISTORY
   block (provided with the payload), include a streak note in the thesis stating how
   many consecutive sessions it has appeared and whether confluence is strengthening,
@@ -202,6 +221,31 @@ RULES:
   or similar on an extended name.
   Note the gate itself does NOT move: the zone can turn a rejected card into a WATCH
   card, but it can never turn a failing card into an actionable one.
+- CAUTIONS. Populate `cautions` with 1-4 short warning flags -- the things that do NOT
+  disqualify the setup (it already cleared every gate above) but that a trader should
+  WEIGH before sizing in. Phrase each as "this doesn't necessarily kill the setup, but
+  weigh it": name the risk, then say why it matters, in one clause. Include any of these
+  that apply, and ONLY when they genuinely apply:
+    * SECTOR WEAKNESS (HIGH PRIORITY): `sector_context.stock_diverging_from_weak_sector`
+      is true -- the name is bullish while its sector ETF is in a downtrend or lagging
+      SPY over 20 days. Say which ETF and which way (e.g. "XLK down and under its 50-day
+      -- the whole group is a headwind; this name is fighting its sector"). If this flag
+      is true you MUST list it, and list it FIRST.
+    * EXTENDED POSITIONING: price is well above its support/entry zone
+      (`entry_zone.status` is "extended", or `dist_to_zone_pct` / `dist_to_zone_atr` is
+      large) -- entering here is chasing; the good entry is a pullback.
+    * FLOW CONCENTRATION: the bullish `flow_alerts` are dominated by ONE large print
+      rather than spread across many (compare the top alert's `premium` to the rest and
+      to `flow_count`) -- one big ticket can be a hedge against stock, not a directional
+      bet, so the "smart money" read is thinner than the gross premium suggests.
+    * BREADTH DIVERGENCE: the setup is bullish on a day when overall breadth is weak or
+      deteriorating (`day_progress.breadth.pct_green` low, or a `broad_selloff`/`soft`
+      tape) -- fewer names are participating, so a single long carries more tape risk.
+    * REPEATED-HIT FATIGUE: the ticker has appeared 4+ CONSECUTIVE sessions (see the
+      REPEAT TICKER HISTORY block) without breaking out -- this can mean healthy coiling
+      OR a failure to launch; say which way the confluence trend points.
+  If none apply, use an empty list. Do not invent flags to fill the slots, and never
+  put a disqualifier here -- a real veto means you drop the card, not caution it.
 
 OUTPUT CONTRACT (STRICT):
 Return ONLY a single JSON object, no prose, no markdown fences. Schema:
@@ -227,7 +271,8 @@ Return ONLY a single JSON object, no prose, no markdown fences. Schema:
       "stop_level": <price where thesis is structurally invalidated, number>,
       "price_target": <technically-derived target, number>,
       "rr_ratio": <reward/risk on the UNDERLYING, from your target and stop, e.g. 2.4>,
-      "iv_assessment": "is IV cheap or expensive for entry, and why (1 sentence)"
+      "iv_assessment": "is IV cheap or expensive for entry, and why (1 sentence)",
+      "cautions": ["1-4 warning flags that apply, or omit / empty list if none"]
     }}
   ]
 }}
@@ -240,15 +285,35 @@ you are reading -- the entry is the current price, which is not a judgement call
 the zone is computed deterministically. A number you supply there would be overwritten
 at best and wrong at worst.
 
-`market_summary` should state the tape honestly, using `macro.day_progress`: on a
-`broad_selloff` say so and say what that means for entries. If `as_of` is "premarket",
-do not describe today's session -- it has not happened.
+`market_summary` is the plain-language market read at the top of the page. TRANSLATE
+every metric into its trading implication -- do not just state the number, say what it
+MEANS for today's decisions. Assume the reader knows basic terms (EMA, VIX, breadth)
+but NOT what each one implies right now. Specifically:
+  * BREADTH ("X% of the universe green", `pct_green` / `pct_above_ema200`): say whether
+    participation is BROAD or NARROW and what that favors. High breadth (say >60% green)
+    = broad participation, a tape that SUPPORTS taking longs; low breadth (say <40%) =
+    a narrow, thin advance carried by a few names, which DISCOURAGES new longs and
+    raises the bar for any single setup. Name the number, then say which way it leans.
+  * VIX (`macro.vix`, `day_progress.vix_change_pct`): explain the fear/hedging read, not
+    just the level. Low/falling VIX = complacency and cheaper option premium, supportive
+    for buying calls; a sharp VIX SPIKE = fear and demand for hedges, a headwind that
+    makes premium expensive and breakouts less reliable. Unknown VIX = neutral, say so.
+  * TAPE (`day_progress.tape`): say plainly whether today is an environment to be buying.
+Use `macro.day_progress` honestly: on a `broad_selloff` say so and say what it means for
+entries. If `as_of` is "premarket", do not describe today's session -- it has not
+happened; describe the setup into the open using `prior_session` instead. Avoid
+unexplained jargon: every metric you cite gets its "so what" in the same breath.
 
-Keep the prose tight: each entry in `confluence_signals` is ONE short clause naming
-the category and the evidence (e.g. "Market structure: daily HH/HL, coiled 1.5% under
-a 12-bar range high"). List only the categories that actually fired. The output token
-budget is shared with your reasoning -- long signal prose can truncate the JSON
-mid-card and lose the whole scan, so be economical.
+Each entry in `confluence_signals` is written in TWO parts: the OBSERVATION, then a
+dash, then its IMPLICATION in plain language -- what the signal means for the trade,
+so a reader without technical training understands WHY it matters. Not "Momentum:
+RSI 62.9" but "Momentum: RSI in the low 60s -- buyers in control with room to run
+before overbought". Not "Trend: price above all EMAs" but "Trend: price above the 8,
+21, 50 and 200-day averages -- every timeframe of buyer is in profit and defending".
+Name the category, give the number, then say what it implies. List only the categories
+that actually fired. Keep each to one sentence: the output token budget is shared with
+your reasoning, and long prose can truncate the JSON mid-card and lose the whole scan,
+so make the implication tight, not omitted.
 """
 
 
