@@ -27,7 +27,7 @@ _CONFIDENCE_RANK = {"high": 0, "medium": 1}
 
 # ACTIONABLE = clears the option R/R floor at the price you can pay right now.
 # WATCH = the same setup, failing that floor today but clearing it at its entry zone.
-# A watch card is a PLAN with a trigger, never an entry -- see _validate_cards.
+# A watch card is a PLAN with a trigger, never an entry -- see _process_card.
 _STATE_RANK = {"actionable": 0, "watch": 1}
 
 
@@ -281,236 +281,306 @@ def _model_zone_entry(
     }
 
 
-def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
-    """Filter, normalize and sort trade cards from the parsed model output."""
-    summary = str(parsed.get("market_summary", "")).strip()
-    raw_cards = parsed.get("trade_cards", [])
-    if not isinstance(raw_cards, list):
-        return summary, []
+# Setup-archetype registry. Every scanned ticker is scored against the CORE rubric
+# and, in parallel, against each ARCHETYPE rubric (see prompt_builder). An archetype
+# is a self-contained block: the model scores it and emits its own card array, and
+# this registry says which array to read, its qualifying threshold, and its watch cap.
+# The per-card machinery in _process_card is shared, so adding an archetype
+# (flat-base, pullback-continuation, ...) is a new entry here plus a rubric block in
+# prompt_builder -- no rearchitecting. The "breakout" flag toggles the one archetype-
+# specific hard gate (_breakout_gate: break state + volume confirmation).
+_ARCHETYPES = {
+    "core": {
+        "cards_key": "trade_cards",
+        "min_confluence": config.MIN_CONFLUENCE_COUNT,
+        "max_watch": config.MAX_WATCH_CARDS,
+        "breakout": False,
+    },
+    "breakout": {
+        "cards_key": "breakout_cards",
+        "min_confluence": config.MIN_BREAKOUT_CONFLUENCE_COUNT,
+        "max_watch": config.MAX_BREAKOUT_WATCH_CARDS,
+        "breakout": True,
+    },
+}
 
-    index = _candidate_index(payload)
-    records = {
-        str(t.get("symbol", "")).upper(): t for t in (payload.get("tickers") or [])
+
+def _breakout_fields(ticker: str, c: dict, record: dict) -> Optional[dict]:
+    """
+    Validate a breakout card's archetype-only fields and enforce the break-state
+    volume gate. Returns {break_state, breakout_level} to merge into the card, or
+    None to DROP it.
+
+    Volume expansion on the break is the single most important breakout signal, so it
+    is a HARD requirement for the "breaking" and "extended" states -- a break there on
+    flat/light volume does not qualify. "approaching" is exempt: by definition the
+    surge has not happened yet. rel_volume missing counts as unconfirmed, not as a
+    pass -- an unverifiable break is not a confirmed one.
+    """
+    state = str(c.get("break_state", "")).strip().lower()
+    if state not in config.BREAKOUT_STATES:
+        logger.warning(
+            "%s: dropping breakout card -- invalid break_state %r",
+            ticker, c.get("break_state"),
+        )
+        return None
+    if state in ("breaking", "extended"):
+        rel_vol = (record.get("daily") or {}).get("rel_volume")
+        if rel_vol is None or rel_vol < config.BREAKOUT_MIN_RVOL_ON_BREAK:
+            logger.warning(
+                "%s: dropping breakout card -- state '%s' requires rel_volume >= %.2f "
+                "(volume confirmation) but got %s",
+                ticker, state, config.BREAKOUT_MIN_RVOL_ON_BREAK, rel_vol,
+            )
+            return None
+    return {"break_state": state, "breakout_level": _coerce_number(c.get("breakout_level"))}
+
+
+def _process_card(
+    c: dict, spec: dict, index: dict, records: dict
+) -> Optional[dict]:
+    """
+    Validate, normalize and gate ONE model card for a given archetype `spec`.
+
+    Everything here is archetype-agnostic except two touch points: the qualifying
+    `min_confluence` threshold, and (for breakout) the break-state/volume gate via
+    _breakout_fields. The contract-in-chain, breakeven, downtrend-veto, earnings,
+    underlying-R/R and option-R/R gates apply to every archetype unchanged -- a
+    breakout call is still a call you have to be able to buy at an acceptable price.
+    Returns the finished card dict, or None to drop it.
+    """
+    if not isinstance(c, dict):
+        return None
+    confidence = str(c.get("confidence", "")).strip().lower()
+    if confidence not in _CONFIDENCE_RANK:
+        return None  # drop Low / unknown tiers
+    signals = c.get("confluence_signals") or []
+    if not isinstance(signals, list):
+        signals = [str(signals)]
+
+    # Caution flags: 1-4 "weigh this" warnings. Coerce to a clean list of strings
+    # and cap at 4 so a runaway list can't blow out the card. Empty is fine.
+    cautions = c.get("cautions") or []
+    if not isinstance(cautions, list):
+        cautions = [str(cautions)]
+    cautions = [str(x).strip() for x in cautions if str(x).strip()][:4]
+    count = c.get("confluence_count")
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        count = len(signals)
+    if count < spec["min_confluence"]:
+        return None
+
+    ticker = str(c.get("ticker", "")).upper()
+    # The prompt states several hard rules. Prose is not enforcement -- one
+    # instruction-following lapse ships a bad trade, so re-check them here against
+    # the same payload the model was given.
+    record = records.get(ticker, {})
+
+    # Archetype-specific gate (breakout: break state + volume confirmation). Kept
+    # ahead of the shared gates so a mis-stated break state is dropped cheaply.
+    extra: dict = {}
+    if spec["breakout"]:
+        bo = _breakout_fields(ticker, c, record)
+        if bo is None:
+            return None
+        extra.update(bo)
+
+    contract = _resolve_contract(ticker, c.get("contract") or {}, index)
+    if contract is None:
+        # The model invented a contract that isn't in the live chain. Publishing
+        # it would put an unbuyable strike in front of a trader -- drop the card.
+        logger.warning(
+            "%s: dropping card -- contract %s not found in the live chain",
+            ticker,
+            c.get("contract"),
+        )
+        return None
+
+    target = _coerce_number(c.get("price_target"))
+    breakeven = contract.get("breakeven")
+    if target is not None and breakeven is not None and target <= breakeven:
+        logger.warning(
+            "%s: dropping card -- price target %.2f is at/below the contract "
+            "breakeven %.2f (the trade loses money even if the thesis is right)",
+            ticker,
+            target,
+            breakeven,
+        )
+        return None
+
+    # 1. Structure veto: a daily downtrend is distribution, whatever else fired.
+    #    Applied to breakouts too -- a genuine break clears the last pivot high, so
+    #    structure reads uptrend/range, not downtrend; a "breakout" still tagged a
+    #    downtrend is one breaking down, and the veto correctly kills it.
+    trend = ((record.get("structure") or {}).get("daily") or {}).get("trend")
+    if trend == "downtrend":
+        logger.warning(
+            "%s: dropping card -- daily structure is a downtrend (veto)", ticker
+        )
+        return None
+
+    # 2. Never hold a contract through an earnings report.
+    dte = contract.get("dte")
+    days_to_earnings = (record.get("earnings") or {}).get("days_to_earnings")
+    if dte is not None and days_to_earnings is not None and days_to_earnings < dte:
+        logger.warning(
+            "%s: dropping card -- earnings in %sd but the contract runs %sd "
+            "(would be held through the report)",
+            ticker,
+            days_to_earnings,
+            dte,
+        )
+        return None
+
+    # 3. Reward/risk on the UNDERLYING -- this measures the quality of the thesis.
+    #
+    # Entry is OURS, not the model's. It used to be whatever number the model put
+    # in `entry_reference`, coerced and published unchecked -- the only figure on
+    # the card that was never verified, and the denominator of the very ratio
+    # this gate turns on. The entry is the current price; that is not a judgement
+    # call, so there is nothing to delegate.
+    stop = _coerce_number(c.get("stop_level"))
+    price = _coerce_number(record.get("price"))
+    if price is None or stop is None or price <= stop:
+        logger.warning(
+            "%s: dropping card -- entry %s / stop %s cannot define a risk",
+            ticker, price, stop,
+        )
+        return None
+
+    # Recompute rather than trust. The gate ran on the model's STATED ratio, so
+    # an arithmetic slip shipped silently past the floor it was supposed to hit.
+    rr = round((target - price) / (price - stop), 2) if target is not None else None
+    if rr is None:
+        logger.warning("%s: dropping card -- no price target to measure", ticker)
+        return None
+    stated = _coerce_number(c.get("rr_ratio"))
+    if stated is not None and rr > 0 and abs(stated - rr) / rr > config.RR_DIVERGENCE_TOLERANCE:
+        # The numbers it reasoned from are not the numbers it reported. Whatever
+        # the thesis says, it was not derived from this trade.
+        logger.warning(
+            "%s: dropping card -- stated R/R %.2f but entry/stop/target give "
+            "%.2f (>%.0f%% divergence)",
+            ticker, stated, rr, config.RR_DIVERGENCE_TOLERANCE * 100,
+        )
+        return None
+    if rr < config.MIN_RR_RATIO:
+        logger.warning(
+            "%s: dropping card -- underlying reward/risk %.2f below the %.1f floor",
+            ticker, rr, config.MIN_RR_RATIO,
+        )
+        return None
+
+    # 4. Reward/risk on the OPTION -- this measures the quality of the TRADE, and
+    # it is the one that decides whether the card ships. You are buying a call,
+    # not the stock: your risk is the premium (less whatever the option is still
+    # worth at the stop), your reward is non-linear in the underlying, and theta
+    # is invisible to a price-distance ratio. A 2.4 on the chart can be a losing
+    # option when the move takes five weeks instead of two.
+    opt = pricing.option_reward_risk(
+        strike=contract.get("strike"),
+        ask=contract.get("ask"),
+        iv=contract.get("iv"),
+        dte=contract.get("dte"),
+        price_target=target,
+        stop_level=stop,
+    ) if target is not None else None
+
+    if opt is None:
+        logger.warning(
+            "%s: dropping card -- could not model the option's reward/risk "
+            "(target=%s stop=%s contract=%s)",
+            ticker, target, stop, contract,
+        )
+        return None
+
+    zone = record.get("entry_zone") or {}
+    zone_entry = _model_zone_entry(
+        record=record,
+        contract=contract,
+        target=target,
+        model_stop=stop,
+        price=price,
+    )
+
+    # THE CRUX. The gate runs on the price you can actually pay RIGHT NOW, and it
+    # does not move. A card that only clears the floor at a price that may never
+    # print is a trade you cannot take dressed as one you can -- exactly what this
+    # function exists to prevent -- so the zone R/R never rescues a card into
+    # "buy this".
+    #
+    # But refusing to compute it throws away the real question ("the thesis is
+    # fine, where should I actually get in?"). So a setup that fails now and
+    # clears at its zone becomes a third thing: a WATCH card, published as a plan
+    # with a trigger price and never as an entry. Every other gate above --
+    # contract-in-chain, target>breakeven, downtrend veto, earnings, underlying
+    # R/R -- has already been applied to it unchanged.
+    state = "actionable"
+    if opt["option_rr"] < config.MIN_OPTION_RR:
+        zone_rr = (zone_entry or {}).get("option_rr_at_zone")
+        zone_delta = (zone_entry or {}).get("delta_at_zone")
+        # The strike was picked for TODAY's price. Down at the zone it may be so
+        # far OTM that its reward/risk only looks good because the premium went to
+        # pennies -- a lottery ticket, not the trade in the thesis. Refuse to
+        # rescue on that basis. This makes the WATCH path STRICTER; it can never
+        # let a card through that would otherwise have been dropped.
+        delta_ok = zone_delta is None or zone_delta >= config.ZONE_MIN_DELTA_AT_ZONE
+        # Only a pullback can rescue it. If price is already IN the zone, the
+        # zone IS the current price and there is no better entry to wait for --
+        # the trade simply doesn't work.
+        if (
+            zone.get("status") == "extended"
+            and zone_rr is not None
+            and zone_rr >= config.MIN_OPTION_RR
+            and delta_ok
+        ):
+            state = "watch"
+            logger.info(
+                "%s: WATCH -- option R/R %.2f now, %.2f at the %.2f-%.2f zone "
+                "(trigger %.2f)",
+                ticker, opt["option_rr"], zone_rr,
+                zone.get("zone_low"), zone.get("zone_high"), zone.get("zone_high"),
+            )
+        else:
+            logger.warning(
+                "%s: dropping card -- option reward/risk %.2f below the %.1f "
+                "floor and no zone rescue (zone status=%s, zone R/R=%s)",
+                ticker, opt["option_rr"], config.MIN_OPTION_RR,
+                zone.get("status"), zone_rr,
+            )
+            return None
+
+    card = {
+        "ticker": ticker,
+        "bias": "calls",
+        "state": state,
+        "confidence": "High" if confidence == "high" else "Medium",
+        "confluence_count": count,
+        "confluence_signals": [str(s) for s in signals],
+        "cautions": cautions,
+        "thesis": str(c.get("thesis", "")).strip(),
+        "contract": contract,
+        # Ours, from the record -- see the entry gate above.
+        "entry_reference": price,
+        "entry_zone": zone,
+        "zone_entry": zone_entry,
+        "stop_level": stop,
+        "price_target": target,
+        "rr_ratio": rr,          # on the underlying: thesis quality
+        "option_rr": opt["option_rr"],  # on the contract: trade quality
+        "value_at_target": opt["value_at_target"],
+        "value_at_stop": opt["value_at_stop"],
+        "premium_at_risk": opt["premium_at_risk"],
+        "iv_assessment": str(c.get("iv_assessment", "")).strip(),
     }
-    cards: list[dict] = []
-    for c in raw_cards:
-        if not isinstance(c, dict):
-            continue
-        confidence = str(c.get("confidence", "")).strip().lower()
-        if confidence not in _CONFIDENCE_RANK:
-            continue  # drop Low / unknown tiers
-        signals = c.get("confluence_signals") or []
-        if not isinstance(signals, list):
-            signals = [str(signals)]
+    card.update(extra)  # archetype-specific fields (breakout: break_state, level)
+    return card
 
-        # Caution flags: 1-4 "weigh this" warnings. Coerce to a clean list of strings
-        # and cap at 4 so a runaway list can't blow out the card. Empty is fine.
-        cautions = c.get("cautions") or []
-        if not isinstance(cautions, list):
-            cautions = [str(cautions)]
-        cautions = [str(x).strip() for x in cautions if str(x).strip()][:4]
-        count = c.get("confluence_count")
-        try:
-            count = int(count)
-        except (TypeError, ValueError):
-            count = len(signals)
-        if count < config.MIN_CONFLUENCE_COUNT:
-            continue
 
-        ticker = str(c.get("ticker", "")).upper()
-        contract = _resolve_contract(ticker, c.get("contract") or {}, index)
-        if contract is None:
-            # The model invented a contract that isn't in the live chain. Publishing
-            # it would put an unbuyable strike in front of a trader -- drop the card.
-            logger.warning(
-                "%s: dropping card -- contract %s not found in the live chain",
-                ticker,
-                c.get("contract"),
-            )
-            continue
-
-        target = _coerce_number(c.get("price_target"))
-        breakeven = contract.get("breakeven")
-        if target is not None and breakeven is not None and target <= breakeven:
-            logger.warning(
-                "%s: dropping card -- price target %.2f is at/below the contract "
-                "breakeven %.2f (the trade loses money even if the thesis is right)",
-                ticker,
-                target,
-                breakeven,
-            )
-            continue
-
-        # The prompt states several hard rules. Prose is not enforcement -- one
-        # instruction-following lapse ships a bad trade, so re-check them here
-        # against the same payload the model was given.
-        record = records.get(ticker, {})
-
-        # 1. Structure veto: a daily downtrend is distribution, whatever else fired.
-        trend = ((record.get("structure") or {}).get("daily") or {}).get("trend")
-        if trend == "downtrend":
-            logger.warning(
-                "%s: dropping card -- daily structure is a downtrend (veto)", ticker
-            )
-            continue
-
-        # 2. Never hold a contract through an earnings report.
-        dte = contract.get("dte")
-        days_to_earnings = (record.get("earnings") or {}).get("days_to_earnings")
-        if dte is not None and days_to_earnings is not None and days_to_earnings < dte:
-            logger.warning(
-                "%s: dropping card -- earnings in %sd but the contract runs %sd "
-                "(would be held through the report)",
-                ticker,
-                days_to_earnings,
-                dte,
-            )
-            continue
-
-        # 3. Reward/risk on the UNDERLYING -- this measures the quality of the thesis.
-        #
-        # Entry is OURS, not the model's. It used to be whatever number the model put
-        # in `entry_reference`, coerced and published unchecked -- the only figure on
-        # the card that was never verified, and the denominator of the very ratio
-        # this gate turns on. The entry is the current price; that is not a judgement
-        # call, so there is nothing to delegate.
-        stop = _coerce_number(c.get("stop_level"))
-        price = _coerce_number(record.get("price"))
-        if price is None or stop is None or price <= stop:
-            logger.warning(
-                "%s: dropping card -- entry %s / stop %s cannot define a risk",
-                ticker, price, stop,
-            )
-            continue
-
-        # Recompute rather than trust. The gate ran on the model's STATED ratio, so
-        # an arithmetic slip shipped silently past the floor it was supposed to hit.
-        rr = round((target - price) / (price - stop), 2) if target is not None else None
-        if rr is None:
-            logger.warning("%s: dropping card -- no price target to measure", ticker)
-            continue
-        stated = _coerce_number(c.get("rr_ratio"))
-        if stated is not None and rr > 0 and abs(stated - rr) / rr > config.RR_DIVERGENCE_TOLERANCE:
-            # The numbers it reasoned from are not the numbers it reported. Whatever
-            # the thesis says, it was not derived from this trade.
-            logger.warning(
-                "%s: dropping card -- stated R/R %.2f but entry/stop/target give "
-                "%.2f (>%.0f%% divergence)",
-                ticker, stated, rr, config.RR_DIVERGENCE_TOLERANCE * 100,
-            )
-            continue
-        if rr < config.MIN_RR_RATIO:
-            logger.warning(
-                "%s: dropping card -- underlying reward/risk %.2f below the %.1f floor",
-                ticker, rr, config.MIN_RR_RATIO,
-            )
-            continue
-
-        # 4. Reward/risk on the OPTION -- this measures the quality of the TRADE, and
-        # it is the one that decides whether the card ships. You are buying a call,
-        # not the stock: your risk is the premium (less whatever the option is still
-        # worth at the stop), your reward is non-linear in the underlying, and theta
-        # is invisible to a price-distance ratio. A 2.4 on the chart can be a losing
-        # option when the move takes five weeks instead of two.
-        opt = pricing.option_reward_risk(
-            strike=contract.get("strike"),
-            ask=contract.get("ask"),
-            iv=contract.get("iv"),
-            dte=contract.get("dte"),
-            price_target=target,
-            stop_level=stop,
-        ) if target is not None else None
-
-        if opt is None:
-            logger.warning(
-                "%s: dropping card -- could not model the option's reward/risk "
-                "(target=%s stop=%s contract=%s)",
-                ticker, target, stop, contract,
-            )
-            continue
-
-        zone = record.get("entry_zone") or {}
-        zone_entry = _model_zone_entry(
-            record=record,
-            contract=contract,
-            target=target,
-            model_stop=stop,
-            price=price,
-        )
-
-        # THE CRUX. The gate runs on the price you can actually pay RIGHT NOW, and it
-        # does not move. A card that only clears the floor at a price that may never
-        # print is a trade you cannot take dressed as one you can -- exactly what this
-        # function exists to prevent -- so the zone R/R never rescues a card into
-        # "buy this".
-        #
-        # But refusing to compute it throws away the real question ("the thesis is
-        # fine, where should I actually get in?"). So a setup that fails now and
-        # clears at its zone becomes a third thing: a WATCH card, published as a plan
-        # with a trigger price and never as an entry. Every other gate above --
-        # contract-in-chain, target>breakeven, downtrend veto, earnings, underlying
-        # R/R -- has already been applied to it unchanged.
-        state = "actionable"
-        if opt["option_rr"] < config.MIN_OPTION_RR:
-            zone_rr = (zone_entry or {}).get("option_rr_at_zone")
-            zone_delta = (zone_entry or {}).get("delta_at_zone")
-            # The strike was picked for TODAY's price. Down at the zone it may be so
-            # far OTM that its reward/risk only looks good because the premium went to
-            # pennies -- a lottery ticket, not the trade in the thesis. Refuse to
-            # rescue on that basis. This makes the WATCH path STRICTER; it can never
-            # let a card through that would otherwise have been dropped.
-            delta_ok = zone_delta is None or zone_delta >= config.ZONE_MIN_DELTA_AT_ZONE
-            # Only a pullback can rescue it. If price is already IN the zone, the
-            # zone IS the current price and there is no better entry to wait for --
-            # the trade simply doesn't work.
-            if (
-                zone.get("status") == "extended"
-                and zone_rr is not None
-                and zone_rr >= config.MIN_OPTION_RR
-                and delta_ok
-            ):
-                state = "watch"
-                logger.info(
-                    "%s: WATCH -- option R/R %.2f now, %.2f at the %.2f-%.2f zone "
-                    "(trigger %.2f)",
-                    ticker, opt["option_rr"], zone_rr,
-                    zone.get("zone_low"), zone.get("zone_high"), zone.get("zone_high"),
-                )
-            else:
-                logger.warning(
-                    "%s: dropping card -- option reward/risk %.2f below the %.1f "
-                    "floor and no zone rescue (zone status=%s, zone R/R=%s)",
-                    ticker, opt["option_rr"], config.MIN_OPTION_RR,
-                    zone.get("status"), zone_rr,
-                )
-                continue
-
-        cards.append(
-            {
-                "ticker": ticker,
-                "bias": "calls",
-                "state": state,
-                "confidence": "High" if confidence == "high" else "Medium",
-                "confluence_count": count,
-                "confluence_signals": [str(s) for s in signals],
-                "cautions": cautions,
-                "thesis": str(c.get("thesis", "")).strip(),
-                "contract": contract,
-                # Ours, from the record -- see the entry gate above.
-                "entry_reference": price,
-                "entry_zone": zone,
-                "zone_entry": zone_entry,
-                "stop_level": stop,
-                "price_target": target,
-                "rr_ratio": rr,          # on the underlying: thesis quality
-                "option_rr": opt["option_rr"],  # on the contract: trade quality
-                "value_at_target": opt["value_at_target"],
-                "value_at_stop": opt["value_at_stop"],
-                "premium_at_risk": opt["premium_at_risk"],
-                "iv_assessment": str(c.get("iv_assessment", "")).strip(),
-            }
-        )
-
+def _finalize(cards: list[dict], max_watch: int, label: str) -> list[dict]:
+    """Sort one archetype's cards (actionable first) and cap its WATCH plans."""
     # Things you can act on today come first; plans come last.
     cards.sort(
         key=lambda x: (
@@ -523,17 +593,47 @@ def _validate_cards(parsed: dict, payload: dict) -> tuple[str, list[dict]]:
     # A broad selloff can push half the universe out of reach at once. Keep the best
     # few plans and say what was dropped -- a silent cap reads as "that was all".
     watch = [c for c in cards if c["state"] == "watch"]
-    if len(watch) > config.MAX_WATCH_CARDS:
-        keep = set(id(c) for c in watch[: config.MAX_WATCH_CARDS])
+    if len(watch) > max_watch:
+        keep = set(id(c) for c in watch[:max_watch])
         logger.info(
-            "Capping WATCH cards at %s; dropping %s lower-ranked: %s",
-            config.MAX_WATCH_CARDS,
-            len(watch) - config.MAX_WATCH_CARDS,
-            [c["ticker"] for c in watch[config.MAX_WATCH_CARDS :]],
+            "Capping %s WATCH cards at %s; dropping %s lower-ranked: %s",
+            label,
+            max_watch,
+            len(watch) - max_watch,
+            [c["ticker"] for c in watch[max_watch:]],
         )
         cards = [c for c in cards if c["state"] != "watch" or id(c) in keep]
 
-    return summary, cards
+    return cards
+
+
+def _validate_archetype(
+    spec: dict, label: str, parsed: dict, index: dict, records: dict
+) -> list[dict]:
+    """Filter, normalize, sort and cap one archetype's cards from the model output."""
+    raw_cards = parsed.get(spec["cards_key"], [])
+    if not isinstance(raw_cards, list):
+        return []
+    cards = [
+        card
+        for c in raw_cards
+        if (card := _process_card(c, spec, index, records)) is not None
+    ]
+    return _finalize(cards, spec["max_watch"], label)
+
+
+def _validate_output(parsed: dict, payload: dict) -> tuple[str, list[dict], list[dict]]:
+    """Return (market_summary, core trade cards, breakout cards) from parsed output."""
+    summary = str(parsed.get("market_summary", "")).strip()
+    index = _candidate_index(payload)
+    records = {
+        str(t.get("symbol", "")).upper(): t for t in (payload.get("tickers") or [])
+    }
+    core = _validate_archetype(_ARCHETYPES["core"], "core", parsed, index, records)
+    breakout = _validate_archetype(
+        _ARCHETYPES["breakout"], "breakout", parsed, index, records
+    )
+    return summary, core, breakout
 
 
 class ClaudeEngine:
@@ -541,6 +641,13 @@ class ClaudeEngine:
         self._client = AsyncAnthropic(
             api_key=config.ANTHROPIC_API_KEY,
             timeout=config.CLAUDE_TIMEOUT_SECONDS,
+            # This class runs its OWN retry policy (analyze() retries once, and a
+            # refusal falls back to a second model). The SDK's default max_retries=2
+            # stacks ON TOP of that: a call whose generation genuinely exceeds the
+            # timeout was retried 3x internally before surfacing, turning a single
+            # slow scan into a ~9-minute stall per attempt. Let our loop be the sole
+            # retry authority so a timeout surfaces promptly and is handled once.
+            max_retries=0,
         )
 
     async def _call(
@@ -596,11 +703,17 @@ class ClaudeEngine:
         parsed = _extract_json(text)
         if parsed is None:
             raise ValueError("Could not parse JSON from Claude response")
-        summary, cards = _validate_cards(parsed, payload)
+        summary, cards, breakout_cards = _validate_output(parsed, payload)
         logger.info(
-            "Claude (%s) produced %s qualifying trade card(s)", model, len(cards)
+            "Claude (%s) produced %s core trade card(s) and %s breakout card(s)",
+            model, len(cards), len(breakout_cards),
         )
-        return {"market_summary": summary, "trade_cards": cards, "error": None}
+        return {
+            "market_summary": summary,
+            "trade_cards": cards,
+            "breakout_cards": breakout_cards,
+            "error": None,
+        }
 
     async def _fallback_after_refusal(
         self, system_prompt: str, user_content: str, session: str, payload: dict
@@ -626,12 +739,13 @@ class ClaudeEngine:
                 f"({config.CLAUDE_MODEL}); fallback {fallback} failed: {exc}"
             )
         logger.error(message)
-        return {"market_summary": "", "trade_cards": [], "error": message}
+        return {"market_summary": "", "trade_cards": [], "breakout_cards": [], "error": message}
 
     async def analyze(self, payload: dict) -> dict:
         """
         Run the confluence analysis. Returns:
-          {"market_summary": str, "trade_cards": [...], "error": Optional[str]}
+          {"market_summary": str, "trade_cards": [...], "breakout_cards": [...],
+           "error": Optional[str]}
         Retries once after config.CLAUDE_RETRY_DELAY_SECONDS on failure. A refusal
         is not retried on the same model — it falls back to CLAUDE_FALLBACK_MODEL.
         """
@@ -661,7 +775,8 @@ class ClaudeEngine:
                     return {
                         "market_summary": "",
                         "trade_cards": [],
+                        "breakout_cards": [],
                         "error": str(exc),
                     }
         # Unreachable, but keeps type-checkers content.
-        return {"market_summary": "", "trade_cards": [], "error": "unknown"}
+        return {"market_summary": "", "trade_cards": [], "breakout_cards": [], "error": "unknown"}

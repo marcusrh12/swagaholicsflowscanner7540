@@ -64,7 +64,12 @@ CLAUDE_EFFORT = "medium"             # fable-5 adaptive-thinking effort ("low"/"
 # truncated the JSON mid-card (stop_reason=max_tokens), which surfaces as an
 # unparseable response, so keep real headroom above thinking + output.
 CLAUDE_MAX_TOKENS = 24000
-CLAUDE_TIMEOUT_SECONDS = 180
+# The model now scores TWO rubrics (core + breakout archetype) and can emit two card
+# sections in one call, so a single generation runs materially longer than the
+# ~110s a core-only scan took. 180s was tripping the request timeout on every
+# attempt (surfacing as "Request timed out or interrupted"); 300s gives the larger
+# two-section output real headroom while still bounding a hung call.
+CLAUDE_TIMEOUT_SECONDS = 300
 CLAUDE_RETRY_DELAY_SECONDS = 10  # retry once after this delay on failure
 
 # --------------------------------------------------------------------------- #
@@ -262,6 +267,46 @@ RISK_FREE_RATE = 0.04
 # 3-of-6 it replaced; 4-of-7 keeps the bar where it was.
 MIN_CONFLUENCE_COUNT = 4
 CONFLUENCE_CATEGORY_COUNT = 7         # kept in sync with the rubric in prompt_builder
+
+# --------------------------------------------------------------------------- #
+# Setup archetypes
+# --------------------------------------------------------------------------- #
+# Every scanned ticker is evaluated against the CORE rubric above and, in
+# parallel, against one or more setup-ARCHETYPE rubrics. An archetype is a
+# self-contained scoring block with its own confluence criteria and its own
+# qualifying threshold; a ticker can qualify for the core section, an archetype
+# section, both, or neither. "Breakout" is the first archetype -- flat-base,
+# pullback-continuation etc. can be added later by following the same pattern
+# (a rubric block in analysis/prompt_builder + a registry entry in
+# analysis/claude_engine, with no rearchitecting).
+
+# BREAKOUT archetype -------------------------------------------------------- #
+# Breakouts are surfaced EARLIER than core swing setups -- price is only just
+# clearing resistance, so fewer confirming signals have printed yet. The lower
+# threshold is deliberate and is exactly why the section is labelled higher-risk:
+# it trades confirmation for timeliness. Seven breakout-specific categories (see
+# the BREAKOUT RUBRIC in prompt_builder); 3-of-7 vs the core's 4-of-7.
+MIN_BREAKOUT_CONFLUENCE_COUNT = 3
+BREAKOUT_CONFLUENCE_CATEGORY_COUNT = 7   # kept in sync with the rubric in prompt_builder
+
+# Relative volume (today vs its own trailing-20 average, `daily.rel_volume`)
+# required to call a break CONFIRMED. Volume expansion is the single most
+# important breakout signal, so it is a HARD GATE for the "breaking" and
+# "extended" states -- a break on flat/light volume in those states does not
+# qualify. "approaching" is exempt: the surge has not happened yet by definition.
+BREAKOUT_MIN_RVOL_ON_BREAK = 1.3
+
+# RSI above this is a caution even for a breakout (momentum is one thing, blow-off
+# is another). The breakout rubric otherwise treats RSI 65-75 as CONFIRMATION, not
+# an overbought warning -- the opposite of how the core rubric reads it.
+BREAKOUT_RSI_CAUTION = 80
+
+# The three break states a breakout candidate is classified into. "breaking" and
+# "extended" require the volume gate above; "approaching" does not.
+BREAKOUT_STATES = ("approaching", "breaking", "extended")
+
+# Breakout WATCH cards are capped like core watch cards (see MAX_WATCH_CARDS).
+MAX_BREAKOUT_WATCH_CARDS = 3
 
 # Reward/risk floors, enforced in claude_engine (not just asked for in the prompt).
 # MIN_RR_RATIO is measured on the UNDERLYING -- it judges the thesis.

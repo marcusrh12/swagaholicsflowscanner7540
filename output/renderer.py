@@ -182,6 +182,31 @@ def _inject_streak_badges(html: str, streaks: Optional[dict]) -> str:
     return html
 
 
+# Break-state pill for a breakout card: where the setup is in the break sequence.
+# Amber "approaching" (coiled, not triggered), green "breaking" (crossing now on
+# volume), blue "extended" (already broke -- watching for a retest).
+_BREAK_STATE_PILL = {
+    "approaching": {"cls": "state-approaching", "text": "APPROACHING"},
+    "breaking": {"cls": "state-breaking", "text": "BREAKING"},
+    "extended": {"cls": "state-extended", "text": "EXTENDED"},
+}
+
+
+def _break_state_pill(card: dict) -> Optional[dict]:
+    return _BREAK_STATE_PILL.get(str(card.get("break_state", "")).lower())
+
+
+def _enrich_zone(card: dict) -> None:
+    """Attach the precomputed zone display bits to one card, in place."""
+    card["zone_pill"] = _zone_pill(card)
+    card["zone_caption"] = _zone_caption(card)
+    # An at-zone ratio earned by a strike that went far OTM is arithmetically
+    # true and practically a lottery ticket. Flag it rather than let the big
+    # number speak for itself.
+    d = (card.get("zone_entry") or {}).get("delta_at_zone")
+    card["zone_rr_is_thin"] = d is not None and d < config.ZONE_MIN_DELTA_AT_ZONE
+
+
 def render(
     session_name: str,
     macro: dict,
@@ -194,16 +219,17 @@ def render(
     session_label = f"{session_name.title()} session"
 
     # Precompute the zone display bits here rather than in Jinja: the template should
-    # place text, not decide what a zone status means.
+    # place text, not decide what a zone status means. Both the core setups and the
+    # breakout archetype run through the same enrichment -- a breakout card carries
+    # every standard field plus its break-state pill.
     cards = analysis.get("trade_cards", [])
     for c in cards:
-        c["zone_pill"] = _zone_pill(c)
-        c["zone_caption"] = _zone_caption(c)
-        # An at-zone ratio earned by a strike that went far OTM is arithmetically
-        # true and practically a lottery ticket. Flag it rather than let the big
-        # number speak for itself.
-        d = (c.get("zone_entry") or {}).get("delta_at_zone")
-        c["zone_rr_is_thin"] = d is not None and d < config.ZONE_MIN_DELTA_AT_ZONE
+        _enrich_zone(c)
+
+    breakout_cards = analysis.get("breakout_cards", []) or []
+    for c in breakout_cards:
+        _enrich_zone(c)
+        c["state_pill"] = _break_state_pill(c)
 
     context = {
         "session_label": session_label,
@@ -218,6 +244,7 @@ def render(
         "tickers_scanned": tickers_scanned,
         "market_summary": analysis.get("market_summary", ""),
         "cards": cards,
+        "breakout_cards": breakout_cards,
         "error": analysis.get("error"),
     }
 

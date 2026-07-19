@@ -247,6 +247,100 @@ RULES:
   If none apply, use an empty list. Do not invent flags to fill the slots, and never
   put a disqualifier here -- a real veto means you drop the card, not caution it.
 
+SETUP ARCHETYPES -- CORE PLUS BREAKOUT:
+Everything above is the CORE rubric and it is unchanged. Separately, and IN PARALLEL,
+evaluate each ticker against the BREAKOUT rubric below. Think of "which archetype is
+this?" as a classification step: a ticker can qualify for the CORE section, the
+BREAKOUT section, BOTH, or NEITHER, and the two evaluations do not interact. A name
+already in `trade_cards` may ALSO appear in `breakout_cards` if it independently clears
+the breakout rubric, and vice versa. Never drop a breakout candidate merely because it
+did not qualify as a core setup -- they are scored on different criteria.
+
+BREAKOUT RUBRIC (higher-risk, earlier-stage -- see the note after the categories):
+A breakout is price clearing a clearly defined resistance (a prior swing high or the
+top of a consolidation range) that it had been coiling beneath. Evaluate these SEVEN
+breakout-specific categories and count how many fire:
+
+  B1. TREND / MOMENTUM CONTEXT -- daily EMA structure supportive (price above the
+      21/50, ideally the stack) AND `daily.rsi14` showing momentum. For a BREAKOUT,
+      read RSI the OPPOSITE way to the core rubric: RSI 65-75 is momentum CONFIRMATION,
+      not an overbought warning, and fires this category. Only RSI above {config.BREAKOUT_RSI_CAUTION}
+      is a caution (it does NOT fire, and becomes a caution flag). Do NOT apply the
+      core rubric's pullback / momentum-reset logic here -- a breakout is the opposite
+      trade (buying strength as it clears a level, not weakness as it resets to support).
+  B2. BASE TIGHTNESS -- the consolidation the break comes out of should be TIGHT and
+      low-volatility: a small `structure.daily.range_width_pct`, `in_consolidation`
+      true with a healthy `bars_in_range`, and `daily.atr_pct` at or below
+      `daily.atr_pct_10d_ago` (volatility contracting into the break). Reward a tight,
+      orderly base; a loose, choppy, wide-ranging base does NOT fire this and becomes a
+      "choppy base" caution.
+  B3. VOLUME EXPANSION ON THE BREAK -- `daily.rel_volume` (today's volume vs its own
+      20-day average) MEANINGFULLY above 1.0. This is THE most important breakout
+      signal and it is a required gate for two of the three break states (see below).
+      Read it with `macro.day_progress.as_of`: premarket, rel_volume describes the
+      PRIOR session's break; intraday, it is today's developing volume.
+  B4. PROXIMITY TO THE BREAKOUT LEVEL -- price should be RIGHT AT or JUST ABOVE a
+      clearly defined resistance (`structure.daily.nearest_resistance`, a
+      `recent_pivot_highs` level, or `structure.daily.range_high`). This REPLACES the
+      core rubric's "extended above support" veto: for a breakout, being at/just above
+      the broken level is the GOAL, not a penalty. What does NOT fire this: price still
+      well BELOW the level (untriggered), or already FAR past it (missed / extended,
+      R/R gone). Identify the specific level -- it is reported as `breakout_level`.
+  B5. RETEST QUALITY -- is this a clean break (first thrust through the level) or a
+      retest that is HOLDING the broken level as new support (price pulled back to the
+      old resistance and bounced)? A clean break fires; a confirmed retest-and-hold
+      fires MORE strongly (the level has proven itself). A break that has fallen back
+      UNDER the level is a failure, not a retest -- do not fire it.
+  B6. FLOW CONFIRMING THE BREAK -- call flow (the same `flow_alerts` / `net_call_premium`
+      you read for the core SMART MONEY category, with the SAME direction discipline:
+      net_call_premium must be positive) concentrated AT OR ABOVE the breakout strike
+      and timed WITH the break. This is stricter than general bullish flow: it is flow
+      positioned for THIS move through THIS level, not just a bullish tilt on the name.
+  B7. MACRO / SECTOR ALIGNMENT -- the same `macro.day_progress` and `sector_context`
+      read as the core rubric: a supportive tape and a sector that is not fighting the
+      break. A breakout into a `broad_selloff` or out of a rolling-over sector is
+      swimming upstream -- it does not fire this, and the sector-divergence caution
+      still applies exactly as in the core rules.
+
+  Only emit a breakout card if AT LEAST {config.MIN_BREAKOUT_CONFLUENCE_COUNT} of these seven fire. That is a LOWER bar
+  than the core section on purpose: breakouts are earlier-stage with fewer confirming
+  signals, which is precisely why this section is flagged as higher-risk. Confidence is
+  still HIGH or MEDIUM only; drop low-confidence breakouts entirely.
+
+BREAK STATE -- classify every breakout candidate as EXACTLY ONE of:
+  * "approaching" -- coiled JUST BELOW the level, not yet triggered. The volume surge
+    has not happened yet, so B3 is NOT required for this state.
+  * "breaking"    -- crossing the level NOW. REQUIRES volume confirmation
+    (`daily.rel_volume` >= {config.BREAKOUT_MIN_RVOL_ON_BREAK}); a break here on flat/light volume does NOT qualify.
+  * "extended"    -- already broke and is watching for a retest entry. ALSO requires
+    volume confirmation on the break (same gate as "breaking").
+  Report the chosen state as `break_state`. A "breaking" or "extended" candidate whose
+  `daily.rel_volume` is missing or below the threshold must be DROPPED, not downgraded.
+
+BREAKOUT CAUTIONS -- populate the breakout card's `cautions` using the SAME mechanism
+and phrasing rules as the core rubric ("this doesn't kill it, but weigh it"). In
+addition to the core caution flags where they apply (sector weakness FIRST if present,
+breadth divergence, flow concentration, repeated-hit fatigue), include these
+breakout-specific ones when they genuinely apply:
+  * VOLUME DIDN'T CONFIRM -- the break came on flat/light volume (`rel_volume` near or
+    below 1.0). Only possible on an "approaching" card, since the other states gate on it.
+  * EXTENDED PAST THE BREAK -- price has run well beyond the level; reward/risk has
+    deteriorated and entering here is chasing.
+  * CHOPPY BASE -- the consolidation before the break was loose/wide/whippy rather than
+    a tight coil (B2 did not fire).
+  * FAILED-BREAKOUT HISTORY -- price cleared this same level before and fell back
+    (visible in `structure.daily.recent_pivot_highs` / `last_10_closes` / weekly
+    structure); the level has rejected it once, so this attempt carries that risk.
+  * SECTOR / BREADTH NOT SUPPORTING -- reuse the core sector-weakness and breadth-
+    divergence logic (B7 did not fire).
+
+BREAKOUT CONTRACT, TARGET, STOP, R/R, ENTRY ZONE -- identical rules to the core section.
+Pick a real contract from `call_candidates`, target off the measured move / next
+resistance, stop below the broken level (the breakout is wrong if price closes back
+under it -- anchor the stop there, using `structure.daily.range_high`/the broken level
+or `nearest_support`), and the same reward/risk discipline. All the same downstream
+gates apply to breakout cards, so build for them exactly as above.
+
 OUTPUT CONTRACT (STRICT):
 Return ONLY a single JSON object, no prose, no markdown fences. Schema:
 
@@ -274,10 +368,37 @@ Return ONLY a single JSON object, no prose, no markdown fences. Schema:
       "iv_assessment": "is IV cheap or expensive for entry, and why (1 sentence)",
       "cautions": ["1-4 warning flags that apply, or omit / empty list if none"]
     }}
+  ],
+  "breakout_cards": [
+    {{
+      "ticker": "SYMBOL",
+      "bias": "calls",
+      "break_state": "approaching" | "breaking" | "extended",
+      "breakout_level": <number, the resistance/range-top price being broken>,
+      "confidence": "High" | "Medium",
+      "confluence_count": <integer, number of BREAKOUT categories (B1-B7) that fired>,
+      "confluence_signals": ["Base tightness: ...", "Volume expansion: ...", ...],
+      "thesis": "2-3 sentence thesis; end with the same what-confirms / what-fails read",
+      "contract": {{
+        "expiration": "YYYY-MM-DD, copied verbatim from the chosen candidate's `expiry`",
+        "strike": <number, copied verbatim from the chosen candidate's `strike`>,
+        "delta": <number, the chosen candidate's `delta` as given>,
+        "ask": <number, the chosen candidate's `ask` as given>,
+        "breakeven": <number, the chosen candidate's `breakeven` as given>,
+        "open_interest": <integer, the chosen candidate's `open_interest` as given>
+      }},
+      "stop_level": <price where the breakout is invalidated (below the broken level)>,
+      "price_target": <measured-move / next-resistance target, number>,
+      "rr_ratio": <reward/risk on the UNDERLYING, from your target and stop>,
+      "iv_assessment": "is IV cheap or expensive for entry, and why (1 sentence)",
+      "cautions": ["breakout + core caution flags that apply, or empty list if none"]
+    }}
   ]
 }}
 
-If no setups qualify, return {{"market_summary": "...", "trade_cards": []}}.
+Both arrays are independent. If no setups qualify in a section, return it empty.
+If nothing qualifies at all, return
+{{"market_summary": "...", "trade_cards": [], "breakout_cards": []}}.
 Every number must be a JSON number (no quotes, no % signs, no $ signs).
 
 Do NOT emit `entry_reference` or `entry_zone`. Both are set in code from the same data

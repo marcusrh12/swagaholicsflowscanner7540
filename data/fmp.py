@@ -519,6 +519,36 @@ class FMPClient:
             swing_high = float(window20["high"].max())
             swing_low = float(window20["low"].min())
 
+            # --- Volume expansion + base tightness ------------------------- #
+            # Relative volume (current bar vs its own trailing-20 average) is the
+            # single most important breakout signal, and the payload carried no
+            # volume field at all -- so surface it here from the daily frame we
+            # already hold (no extra fetch). The baseline EXCLUDES the current bar
+            # for the same reason relative_volume() does: including today dilutes
+            # the very spike we're trying to measure. Note the current bar is the
+            # PRIOR completed session at premarket and today's PARTIAL bar at the
+            # pulse, so rel_volume means "did it break on volume yesterday" before
+            # the open and "is it breaking on volume now" intraday -- the model
+            # reads it alongside `macro.day_progress.as_of`.
+            vols = daily["volume"].astype(float)
+            today_vol = float(vols.iloc[-1])
+            vol_baseline = (
+                float(vols.iloc[-21:-1].mean()) if len(vols) >= 21 else None
+            )
+            rel_volume = (
+                _round(today_vol / vol_baseline, 2)
+                if vol_baseline and vol_baseline > 0
+                else None
+            )
+
+            # ATR% now vs ~10 bars ago: a tight, coiling base is one whose
+            # volatility is CONTRACTING into the break. One extra scalar lets the
+            # breakout rubric reward a declining ATR% without a full series.
+            atr_pct_series = (atr14 / close) * 100.0
+            atr_pct_10d_ago = (
+                _round(atr_pct_series.iloc[-11]) if len(atr_pct_series) > 11 else None
+            )
+
             # relative-strength inputs (raw returns; vs-SPY computed in aggregator)
             def _ret(n: int) -> Optional[float]:
                 if len(close) <= n:
@@ -596,6 +626,13 @@ class FMPClient:
                     "macd_hist": _round(hist.iloc[-1], 3),
                     "atr14": _round(atr14.iloc[-1]),
                     "atr_pct": _round((atr14.iloc[-1] / last_close) * 100.0),
+                    # ATR% ~10 bars ago -- below atr_pct now means volatility is
+                    # contracting into a tight base (a breakout-rubric input).
+                    "atr_pct_10d_ago": atr_pct_10d_ago,
+                    # Current-bar volume and its expansion over the trailing-20
+                    # average -- the breakout rubric's volume-confirmation gate.
+                    "volume": int(today_vol) if today_vol == today_vol else None,
+                    "rel_volume": rel_volume,
                     "ema8": _round(e8),
                     "ema21": _round(e21),
                     "ema50": _round(e50),

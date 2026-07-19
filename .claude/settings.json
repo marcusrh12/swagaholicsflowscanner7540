@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe \"C:/Users/mrhso/AppData/Local/Temp/claude/c--Users-mrhso-flowscanner/d1e06016-8330-4cbc-8323-f63c45e15f40/scratchpad/probe_gate.py\")",
+      "Bash(python -)",
+      "Bash(.venv/Scripts/python.exe \"C:/Users/mrhso/AppData/Local/Temp/claude/c--Users-mrhso-flowscanner/d1e06016-8330-4cbc-8323-f63c45e15f40/scratchpad/probe_render.py\")",
+      "Bash(timeout 580 .venv/Scripts/python.exe \"C:/Users/mrhso/AppData/Local/Temp/claude/c--Users-mrhso-flowscanner/d1e06016-8330-4cbc-8323-f63c45e15f40/scratchpad/run_scan_test.py\")",
+      "Bash(.venv/Scripts/python.exe -m py_compile data/entry_zone.py data/fmp.py data/aggregator.py data/pricing.py analysis/claude_engine.py analysis/prompt_builder.py output/renderer.py main.py config.py)",
+      "Bash(.venv/Scripts/python.exe -m pyflakes data/entry_zone.py data/fmp.py data/aggregator.py data/pricing.py analysis/claude_engine.py analysis/prompt_builder.py output/renderer.py main.py)",
+      "Bash(pip list *)",
+      "Bash(.venv/Scripts/python.exe -m py_compile data/aggregator.py)",
+      "Bash(git commit *)",
+      "Bash(npx --no-install wrangler --version)",
+      "Bash(env)",
+      "Read(//c/Users/mrhso/**)",
+      "Read(//c/Users/mrhso/AppData/Roaming/xdg.config/.wrangler/config/**)",
+      "Bash(sed -n 's/^oauth_token = \"\\\\\\(.*\\\\\\)\"/\\\\1/p' \"/c/Users/mrhso/AppData/Roaming/xdg.config/.wrangler/config/default.toml\")",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' https://api.cloudflare.com/client/v4/accounts/__TRACKED_VAR__/workers/scripts/flowscanner-cron/settings)",
+      "Bash(python -m json.tool)",
+      "Bash(cat)",
+      "Bash(bash -n /tmp/resolve.sh)",
+      "Bash(bash -n /tmp/guard.sh)"
+    ]
+  }
+}

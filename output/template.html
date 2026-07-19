@@ -84,6 +84,37 @@
     .badge.zone-watch { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
     /* A WATCH card is a plan, not a trade -- it must never read as buy-it-now. */
     .card.watch { border-style: dashed; border-color: var(--blue); opacity: 0.85; }
+    /* Break-state pills for the breakout archetype: approaching (coiled, amber),
+       breaking (crossing now, green), extended (already broke, blue -- watch a retest). */
+    .badge.state-approaching { background: rgba(210,153,34,0.15); color: var(--amber); border: 1px solid var(--amber); }
+    .badge.state-breaking { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
+    .badge.state-extended { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
+    /* Breakout section: visually separated from the core setups with its own header,
+       a plain-language risk subheader, and a purple accent so it never blurs into the
+       higher-confidence core section above it. */
+    .breakout-section { margin-top: 48px; }
+    .section-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px;
+      border-top: 1px solid var(--border); padding-top: 26px; margin-bottom: 6px;
+    }
+    .section-head h2 { margin: 0; font-size: 20px; letter-spacing: 0.4px; }
+    .section-head h2 span { color: #a371f7; }
+    .risk-tag {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      color: #a371f7; background: rgba(163,113,247,0.12); border: 1px solid #a371f7;
+      border-radius: 20px; padding: 3px 10px;
+    }
+    .section-sub {
+      color: var(--muted); font-size: 13px; margin: 4px 0 20px; max-width: 760px;
+      border-left: 3px solid #a371f7; padding-left: 12px;
+    }
+    .breakout-section .card { border-top: 2px solid rgba(163,113,247,0.5); }
+    .break-banner {
+      font-size: 12.5px; color: var(--text); background: rgba(163,113,247,0.08);
+      border: 1px solid rgba(163,113,247,0.35); border-radius: 8px; padding: 7px 10px;
+    }
+    .break-banner strong { color: #a371f7; }
+    .empty.small { padding: 26px 20px; font-size: 13px; }
     .watch-note {
       font-size: 12px; color: var(--blue); background: rgba(88,166,255,0.08);
       border: 1px dashed rgba(88,166,255,0.4); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px;
@@ -309,6 +340,142 @@
       A quiet tape is a valid result &mdash; the scanner only surfaces High/Medium confidence confluences.
     </div>
     {% endif %}
+
+    <section class="breakout-section">
+      <div class="section-head">
+        <h2><span>Breakout</span> watch</h2>
+        <span class="risk-tag">Higher risk &middot; earlier stage</span>
+      </div>
+      <p class="section-sub">
+        Setups breaking out of a base &mdash; caught <strong>earlier</strong> than the core
+        setups above, on <strong>fewer confirming signals</strong>. That is the point and the
+        risk: the entries are timelier but less confirmed, so treat these as ideas to watch,
+        not with the same confidence as the core section. Each card shows where price sits in
+        the break (approaching / breaking / extended) and the level it is clearing.
+      </p>
+
+      {% if breakout_cards %}
+      <div class="cards">
+        {% for c in breakout_cards %}
+        <div class="card breakout{% if c.state == 'watch' %} watch{% endif %}">
+          <div class="card-head">
+            <div class="ticker">{{ c.ticker }}<small>CALLS</small></div>
+            <div class="badges">
+              {#- Distinct badge text ("breakout pts", not "confluences") keeps these
+                  cards out of the core streak-history regex in main.py. -#}
+              <span class="badge count">{{ c.confluence_count }} breakout pts</span>
+              {% if c.state_pill %}<span class="badge {{ c.state_pill.cls }}">{{ c.state_pill.text }}</span>{% endif %}
+              {% if c.zone_pill %}<span class="badge {{ c.zone_pill.cls }}">{{ c.zone_pill.text }}</span>{% endif %}
+              <span class="badge {{ c.confidence }}">{{ c.confidence }}</span>
+            </div>
+          </div>
+
+          {% if c.breakout_level is not none %}
+          <div class="break-banner">
+            {%- if c.break_state == 'approaching' %}Coiled below{% elif c.break_state == 'extended' %}Broke through{% else %}Breaking{% endif %}
+            the <strong>{{ "%.2f"|format(c.breakout_level) }}</strong> level
+            {%- if c.state_pill %} &middot; {{ c.state_pill.text | lower }}{% endif %}.
+          </div>
+          {% endif %}
+
+          {% if c.state == 'watch' %}
+          <div class="watch-note">
+            <strong>WATCH — not an entry today.</strong>
+            The breakout holds, but the contract only pays at a better price.
+            Trigger: a pullback into <strong>{{ "%.2f"|format(c.entry_zone.zone_high) }}</strong>–{{ "%.2f"|format(c.entry_zone.zone_low) }}.
+          </div>
+          {% endif %}
+
+          <div class="thesis">{{ c.thesis }}</div>
+
+          <div class="contract">
+            <span class="k">Contract</span><br />
+            Exp <strong>{{ c.contract.expiration or "n/a" }}</strong>
+            {%- if c.contract.dte is not none %} ({{ c.contract.dte }}d){% endif %}
+            &middot; Strike <strong>{{ c.contract.strike if c.contract.strike is not none else "n/a" }}</strong>
+            &middot; Delta <strong>{{ "%.2f"|format(c.contract.delta) if c.contract.delta is not none else "n/a" }}</strong>
+            <br />
+            Ask <strong>{{ "%.2f"|format(c.contract.ask) if c.contract.ask is not none else "n/a" }}</strong>
+            &middot; Breakeven <strong>{{ "%.2f"|format(c.contract.breakeven) if c.contract.breakeven is not none else "n/a" }}</strong>
+            &middot; OI <strong>{{ "{:,}".format(c.contract.open_interest) if c.contract.open_interest is not none else "n/a" }}</strong>
+          </div>
+
+          <div class="grid2">
+            <div class="metric">
+              <div class="k">Entry Zone</div>
+              <div class="v zone">
+                {%- if c.entry_zone and c.entry_zone.available -%}
+                  {{ "%.2f"|format(c.entry_zone.zone_low) }}–{{ "%.2f"|format(c.entry_zone.zone_high) }}
+                  <span class="sub">{{ c.zone_caption }}</span>
+                {%- else -%}
+                  {{ "%.2f"|format(c.entry_reference) if c.entry_reference is not none else "n/a" }}
+                  <span class="sub">no defined support below</span>
+                {%- endif -%}
+              </div>
+            </div>
+            <div class="metric">
+              <div class="k">Option R/R</div>
+              <div class="v rr">
+                {{- "%.2f"|format(c.option_rr) if c.option_rr is not none else "n/a" -}}
+                {%- if c.zone_entry and c.zone_entry.option_rr_at_zone is not none %}
+                <span style="font-size:11px;color:{{ 'var(--muted)' if c.zone_rr_is_thin else 'var(--blue)' }}">&rarr; {{ "%.2f"|format(c.zone_entry.option_rr_at_zone) }} at zone{% if c.zone_rr_is_thin %}*{% endif %}</span>
+                {%- endif -%}
+                {%- if c.rr_ratio is not none %} <span class="sub">stock {{ "%.1f"|format(c.rr_ratio) }} &middot; entry {{ "%.2f"|format(c.entry_reference) }}</span>{% endif -%}
+              </div>
+            </div>
+            <div class="metric">
+              <div class="k">Target</div>
+              <div class="v target">{{ "%.2f"|format(c.price_target) if c.price_target is not none else "n/a" }}</div>
+            </div>
+            <div class="metric">
+              <div class="k">Stop</div>
+              <div class="v stop">{{ "%.2f"|format(c.stop_level) if c.stop_level is not none else "n/a" }}</div>
+            </div>
+          </div>
+
+          {% if c.entry_zone and c.entry_zone.available and c.entry_zone.levels %}
+          <div class="zone-levels">
+            Zone: {{ c.entry_zone.levels | join(" &middot; ") | safe }}
+            {%- if c.entry_zone.touches %} &middot; <span class="held">held {{ c.entry_zone.touches }}&times;</span>{% endif %}
+          </div>
+          {% endif %}
+
+          <ul class="signals">
+            {% for s in c.confluence_signals %}
+            <li>{{ s }}</li>
+            {% endfor %}
+          </ul>
+
+          {% if c.cautions %}
+          <div class="cautions-box">
+            <div class="cautions-label">Weigh these risks</div>
+            <ul class="cautions">
+              {% for x in c.cautions %}
+              <li>{{ x }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+
+          {% if c.option_rr is not none %}
+          <div class="iv">
+            Contract modelled at {{ "%.0f"|format(c.premium_at_risk * 100) }} at risk per contract
+            &middot; worth ~{{ "%.2f"|format(c.value_at_target) }} at target,
+            ~{{ "%.2f"|format(c.value_at_stop) }} at stop
+            <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+          </div>
+          {% endif %}
+
+          {% if c.iv_assessment %}
+          <div class="iv">IV: {{ c.iv_assessment }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty small">No qualifying breakouts this session.</div>
+      {% endif %}
+    </section>
 
     <footer>
       FlowScanner &middot; for research and educational use only &middot; not investment advice.

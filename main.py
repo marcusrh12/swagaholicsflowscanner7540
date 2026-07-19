@@ -423,7 +423,12 @@ async def run_scan(session_name: str, force: bool = False) -> None:
     # Claude confluence analysis.
     if not records:
         logger.warning("No ticker records to analyze; rendering empty report")
-        analysis = {"market_summary": "No data available this session.", "trade_cards": [], "error": None}
+        analysis = {
+            "market_summary": "No data available this session.",
+            "trade_cards": [],
+            "breakout_cards": [],
+            "error": None,
+        }
     else:
         engine = ClaudeEngine()
         analysis = await engine.analyze(payload)
