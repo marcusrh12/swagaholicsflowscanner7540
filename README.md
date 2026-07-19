@@ -1,7 +1,8 @@
 # FlowScanner
 
-A stock-options scanner that runs twice daily (morning 09:00, afternoon 14:00)
-to identify high-probability swing **call** setups using multi-confluence analysis.
+A stock-options scanner that runs three times each weekday (premarket 09:00,
+confirmation 10:15, pulse 14:00 ET) to identify high-probability swing **call**
+setups using multi-confluence analysis.
 
 It screens a large-cap US-equity universe, pulls price/technical/options/flow data,
 sends a single structured payload to **Claude (`claude-sonnet-4-6`)** for confluence
@@ -149,15 +150,24 @@ The scanner runs itself on GitHub's hosted runners — no machine of yours needs
 be on. The workflow lives at [`.github/workflows/scan.yml`](.github/workflows/scan.yml)
 and fires three times each weekday:
 
-| Session | Cron (UTC) | ET (EDT) |
+| Session | ET (primary) | Purpose |
 | --- | --- | --- |
-| `premarket` | `0 12 * * 1-5` | 8:00 AM |
-| `midday` | `30 16 * * 1-5` | 12:30 PM |
-| `postmarket` | `30 20 * * 1-5` | 4:30 PM |
+| `premarket` | 9:00 AM | **Plan** — 30 min before the bell, off yesterday's completed bar. |
+| `confirmation` | 10:15 AM | **Confirm / change-detection** — ~45 min after the open, once intraday volume and price action are meaningful; notes what changed vs the premarket read (volume confirming, gap held/faded, breakouts going "approaching" → "breaking"). |
+| `pulse` | 2:00 PM | **Reassess** — re-reads today's live bar past the lunch chop, with time left to act before the close. |
 
-The cron schedule is mapped to a session name and passed to `main.py` as the
-`SESSION_TYPE` env var. Cron times are fixed UTC, so during EST (winter) each
-session lands an hour later in ET — shift the crons by one hour if that matters.
+Each session has a **primary** trigger (a Cloudflare Worker, on time — see
+[`cloudflare/`](cloudflare/)) and a **backup** trigger (GitHub's own `schedule`
+crons, offset ~15 min later so they no-op when the primary already ran). The
+workflow resolves the session from the real Eastern clock and passes it to
+`main.py` as the `SESSION_TYPE` env var.
+
+> **EDT/EST drift caveat — applies to all three sessions.** Cron is fixed UTC and
+> does not follow DST, so both schedulers register the EDT *and* EST firing of each
+> session and gate on the real Eastern hour. The ET times above are the EDT
+> (summer) targets; the crons are pinned to those UTC minutes, so an EST-only line
+> lands an hour off until its twin takes over. Changing a session time means
+> updating both `.github/workflows/scan.yml` and `cloudflare/wrangler.toml`.
 
 ### Secrets and variables to add
 
@@ -242,7 +252,7 @@ All scan parameters are in **`config.py`** and are safe to edit:
 - `TARGET_MIN_TICKERS` / `TARGET_MAX_TICKERS` — post-filter universe size
 - `MIN_FLOW_PREMIUM`, `FLOW_LOOKBACK_DAYS`, `TOP_OI_STRIKES` — options/flow
 - `MIN_CONFLUENCE_COUNT` — minimum confluences to emit a card
-- `SCAN_SESSIONS` — the two daily run times
+- `SCAN_SESSIONS` — the three daily run times (premarket / confirmation / pulse)
 - `AUTO_REFRESH_SECONDS` — HTML refresh cadence
 - `FMP_RATE_PER_MIN` / `UW_RATE_PER_MIN` / `HTTP_MAX_CONCURRENCY` — rate limits
 - `CLAUDE_MODEL` — the analysis model

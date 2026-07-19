@@ -1,10 +1,20 @@
 name: FlowScanner Scan
 
-# Two scans per trading day, both pinned to EASTERN time:
-#   premarket 09:00 ET -- the plan, 30 minutes before the bell
-#   pulse     14:00 ET -- did it hold? FMP's daily bar updates intraday, so this
-#                         re-reads EMAs/RSI/structure against today's live bar,
-#                         past the lunch chop, with time left to act before close.
+# Three scans per trading day, all pinned to EASTERN time:
+#   premarket    09:00 ET -- the plan, 30 minutes before the bell.
+#   confirmation 10:15 ET -- ~45 minutes after the open, intraday volume and price
+#                            action are now meaningful (unlike premarket). Same
+#                            rubrics; the emphasis is what has CHANGED since the
+#                            premarket read -- is volume confirming or contradicting,
+#                            did a gap hold or fade, has a breakout gone from
+#                            "approaching" to "breaking" now real session volume is in.
+#   pulse        14:00 ET -- did it hold? FMP's daily bar updates intraday, so this
+#                            re-reads EMAs/RSI/structure against today's live bar,
+#                            past the lunch chop, with time left to act before close.
+#
+# Each session has a PRIMARY firing (Cloudflare Worker, on the hour :00 ET, see
+# cloudflare/) and a BACKUP firing (the GitHub `schedule` crons below, offset to
+# :15 ET so the primary has normally already run and the guard no-ops the backup).
 #
 # TWO TRIGGERS, AND NEITHER IS RELIABLE ALONE:
 #
@@ -38,12 +48,14 @@ on:
     # GitHub cron is UTC and does not follow DST. These are NOT DST twins that
     # need gating, though: the guard resolves the session from the real Eastern
     # clock and from what is missing, never from which cron line fired. So each
-    # pair is simply two chances per session across both offsets, and a firing
-    # with nothing due exits in seconds.
-    - cron: '15 13 * * 1-5'  # 09:15 ET while EDT / 08:15 ET while EST (no-op)
-    - cron: '15 14 * * 1-5'  # 10:15 ET while EDT (no-op) / 09:15 ET while EST
-    - cron: '15 18 * * 1-5'  # 14:15 ET while EDT / 13:15 ET while EST (no-op)
-    - cron: '15 19 * * 1-5'  # 15:15 ET while EDT (no-op) / 14:15 ET while EST
+    # line is simply a chance to catch whichever session is due at that Eastern
+    # hour, and a firing with nothing due exits in seconds. Every session gets one
+    # firing under EDT and one under EST (the resolved session is annotated below).
+    - cron: '15 13 * * 1-5'  # EDT 09:15 -> premarket    / EST 08:15 -> (skip)
+    - cron: '15 14 * * 1-5'  # EDT 10:15 -> confirmation  / EST 09:15 -> premarket
+    - cron: '15 15 * * 1-5'  # EDT 11:15 -> (confirmation, no-op) / EST 10:15 -> confirmation
+    - cron: '15 18 * * 1-5'  # EDT 14:15 -> pulse         / EST 13:15 -> (confirmation, no-op)
+    - cron: '15 19 * * 1-5'  # EDT 15:15 -> pulse         / EST 14:15 -> pulse
   workflow_dispatch:
     inputs:
       session_type:
@@ -94,12 +106,17 @@ jobs:
             # arithmetic context here.
             et_hour=$(TZ=America/New_York date +%-H)
             # The upper bounds are the point, not padding: a scan is something to
-            # act on, not a record to file. A premarket read at 14:00, or a pulse
+            # act on, not a record to file. A premarket read at noon, or a pulse
             # after the close, is worse than nothing -- so a backup delayed past
             # its session's usefulness declines rather than publish a stale card.
-            # Past 16:00 ET nothing is due and the run exits in seconds.
+            # Past 16:00 ET nothing is due and the run exits in seconds. The windows
+            # partition the trading day by session: 9:xx is the premarket plan, the
+            # 10:00-14:00 band belongs to the confirmation read (intraday volume is
+            # in), and 14:00-16:00 is the pulse. A firing landing in a band whose
+            # session already ran is caught by the archive dedupe below (no-op).
             if   [ "$et_hour" -ge 14 ] && [ "$et_hour" -lt 16 ]; then session=pulse
-            elif [ "$et_hour" -ge 9 ]  && [ "$et_hour" -lt 14 ]; then session=premarket
+            elif [ "$et_hour" -ge 10 ] && [ "$et_hour" -lt 14 ]; then session=confirmation
+            elif [ "$et_hour" -ge 9 ]  && [ "$et_hour" -lt 10 ]; then session=premarket
             else session=skip
             fi
             dedupe=true

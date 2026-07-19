@@ -63,13 +63,22 @@ CLAUDE_EFFORT = "medium"             # fable-5 adaptive-thinking effort ("low"/"
 # thinking alone; the seven-category rubric then needs ~4-6k for the cards. 12000
 # truncated the JSON mid-card (stop_reason=max_tokens), which surfaces as an
 # unparseable response, so keep real headroom above thinking + output.
-CLAUDE_MAX_TOKENS = 24000
+# max_tokens covers thinking AND the JSON output. The prompt has grown -- two rubrics
+# (core + breakout) plus per-session framing -- and on the confirmation scan medium
+# effort was observed spending ~20.5k tokens on THINKING alone, which left too little
+# of a 24000 budget for the two-section JSON and truncated a card mid-scan
+# (stop_reason=max_tokens). 32000 keeps real headroom above thinking + two card
+# arrays. (max_tokens is a ceiling, not a target -- raising it does not lengthen a
+# response that finishes sooner.) If truncation recurs, lower CLAUDE_EFFORT.
+CLAUDE_MAX_TOKENS = 32000
 # The model now scores TWO rubrics (core + breakout archetype) and can emit two card
 # sections in one call, so a single generation runs materially longer than the
-# ~110s a core-only scan took. 180s was tripping the request timeout on every
-# attempt (surfacing as "Request timed out or interrupted"); 300s gives the larger
-# two-section output real headroom while still bounding a hung call.
-CLAUDE_TIMEOUT_SECONDS = 300
+# ~110s a core-only scan took -- and observed wall-clock is highly variable (a run
+# that finished in 270s one session exceeded 300s the next with the same rubric).
+# 180s tripped the timeout every attempt; 300s still clipped the slow tail. 600s
+# absorbs that variance while still bounding a genuinely hung call. If timeouts
+# recur, the next lever is lowering CLAUDE_EFFORT (less thinking, faster output).
+CLAUDE_TIMEOUT_SECONDS = 600
 CLAUDE_RETRY_DELAY_SECONDS = 10  # retry once after this delay on failure
 
 # --------------------------------------------------------------------------- #
@@ -343,16 +352,18 @@ MAX_DTE = 56                         # upper bound of the swing DTE window
 # --------------------------------------------------------------------------- #
 # Scan session times (local machine time, 24h "HH:MM")
 #
-# Only used by the local scheduler daemon (scheduler.py). The scans that actually
-# run are scheduled in .github/workflows/scan.yml, pinned to Eastern time — keep
-# the two in sync. The postmarket scan was dropped: the market is closed, so its
-# cards could not be acted on until the next open, by which point the premarket
-# scan supersedes them.
+# Only used by the local scheduler daemon (scheduler.py) and _infer_session_name.
+# The scans that actually run are scheduled in .github/workflows/scan.yml (backup)
+# and cloudflare/ (primary), pinned to Eastern time — keep the three in sync. The
+# postmarket scan was dropped: the market is closed, so its cards could not be
+# acted on until the next open, by which point the premarket scan supersedes them.
 # --------------------------------------------------------------------------- #
 SCAN_SESSIONS = {
-    "premarket": "09:00",  # the plan: 30 min before the bell, off yesterday's completed bar
-    "pulse": "14:00",      # did it hold: FMP's daily bar updates intraday, so this re-reads
-                           # today's live bar past the lunch chop, with time left to act
+    "premarket": "09:00",     # the plan: 30 min before the bell, off yesterday's completed bar
+    "confirmation": "10:15",  # ~45 min after the open: intraday volume and price action are
+                              # now meaningful, so this confirms/contradicts the premarket read
+    "pulse": "14:00",         # did it hold: FMP's daily bar updates intraday, so this re-reads
+                              # today's live bar past the lunch chop, with time left to act
 }
 
 # --------------------------------------------------------------------------- #

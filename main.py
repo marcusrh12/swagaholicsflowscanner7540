@@ -108,6 +108,13 @@ def load_recent_history(n: int = config.HISTORY_SESSIONS) -> dict[str, list[tupl
     ticker the confluence count it showed in each session it appeared in. Returns
     ticker -> [(session_stem, confluence_count)], ordered oldest -> newest.
     Fault-tolerant: an unreadable file is skipped rather than raising.
+
+    Windowed purely by recency (timestamp), NEVER filtered by day or session type. That
+    is what lets the 10:15 confirmation scan see THIS MORNING's 09:00 premarket scan as
+    the most recent prior session ("1 session ago"), so Claude can compare a setup's
+    premarket read against how it is actually trading now. On GitHub Actions the premarket
+    run commits its history file and the confirmation run git-pulls it before scanning, so
+    the same-day earlier session is on disk by the time this reads it.
     """
     history: dict[str, list[tuple[str, int]]] = {}
     for stem, html in _readable_history_files(n):

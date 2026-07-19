@@ -36,10 +36,11 @@ async function dispatchIfDue(env) {
 
   let session;
   if (etHour === 9) session = "premarket";
+  else if (etHour === 10) session = "confirmation";
   else if (etHour === 14) session = "pulse";
   else {
     // The DST twin firing (e.g. the EST-offset cron running while EDT is in
-    // effect). Nothing to do.
+    // effect, such as "0 15" at 11:00 EDT). Nothing to do.
     console.log(`Eastern hour ${etHour} is not a session hour — skipping.`);
     return;
   }

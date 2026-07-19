@@ -4,11 +4,15 @@ compatibility_date = "2024-11-01"
 
 # UTC crons — both the EDT (UTC-4) and EST (UTC-5) firing of each session, same
 # as the GitHub backup schedule. worker.js gates on the real Eastern hour so only
-# the correct twin dispatches; the other is a no-op.
+# the correct twin dispatches; the other is a no-op. Note "0 14" pulls double duty
+# by design: at 09:00 EST it is premarket, at 10:00 EDT it is confirmation, and the
+# Eastern-hour gate in worker.js resolves which — so confirmation needs only one
+# new line ("0 15", its EST twin) rather than two.
 [triggers]
 crons = [
-  "0 13 * * 1-5",  # 09:00 ET premarket while EDT
-  "0 14 * * 1-5",  # 09:00 ET premarket while EST
-  "0 18 * * 1-5",  # 14:00 ET pulse while EDT
-  "0 19 * * 1-5",  # 14:00 ET pulse while EST
+  "0 13 * * 1-5",  # 09:00 ET premarket    while EDT
+  "0 14 * * 1-5",  # 09:00 ET premarket    while EST / 10:00 ET confirmation while EDT
+  "0 15 * * 1-5",  # 10:00 ET confirmation while EST / 11:00 ET (skip)          while EDT
+  "0 18 * * 1-5",  # 14:00 ET pulse        while EDT
+  "0 19 * * 1-5",  # 14:00 ET pulse        while EST
 ]

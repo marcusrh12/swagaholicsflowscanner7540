@@ -438,6 +438,50 @@ so make the implication tight, not omitted.
 """
 
 
+# --------------------------------------------------------------------------- #
+# Session-aware framing
+# --------------------------------------------------------------------------- #
+# The rubrics do not change between sessions -- the scoring is identical. What
+# changes is the EMPHASIS, which is a function of when in the day the scan runs.
+# This block is appended to the system prompt for a specific session; a session
+# with no entry here runs the base prompt unchanged.
+_CONFIRMATION_FRAMING = """\
+
+SESSION CONTEXT -- CONFIRMATION SCAN (~10:15 AM ET):
+This is the mid-morning confirmation scan. The market has been open for roughly 30-45
+minutes, so UNLIKE the premarket scan, intraday volume and price action are now
+MEANINGFUL: `daily.rel_volume`, `daily.ret_from_open_pct`, `daily.range_position_pct`
+and `macro.day_progress` (as_of "intraday") reflect real trading, not an empty
+premarket tape. Use them to CONFIRM or CONTRADICT the read, not just to discover fresh
+setups.
+
+The rubrics are UNCHANGED -- score the core swing rubric and the breakout rubric exactly
+as defined above, at the same thresholds. The only addition is emphasis: for EACH
+qualifying setup, where it is inferable, explicitly note WHAT HAS CHANGED SINCE THE
+PREMARKET VIEW. The REPEAT TICKER HISTORY block below tells you which names were live at
+premarket (a name shown "1 session ago" was, on a normal day, this morning's premarket
+scan) and at what confluence count, so you can compare then vs now. In the thesis or the
+confluence signals, work in whichever of these apply:
+  * VOLUME: is intraday `rel_volume` CONFIRMING the setup (expanding as price works in the
+    setup's direction) or CONTRADICTING it (price up but volume light, or heavy volume
+    going the wrong way)? This is the single most useful thing this scan adds.
+  * THE OPEN: did an opening gap HOLD (price accepted above the gap, building on it) or
+    FADE (gap filled, opening strength sold into)? Read `ret_from_open_pct` and
+    `range_position_pct` together.
+  * BREAKOUTS SPECIFICALLY: has a candidate that would have been "approaching" at
+    premarket now transitioned to "breaking" -- i.e. is it clearing the level NOW on real
+    session volume, satisfying the volume gate that premarket could not? Say so, and set
+    `break_state` off what the live tape shows, not off the premarket coil.
+If a setup looked good at premarket but the open is now contradicting it (breaking down,
+volume drying up, gap failing), that is exactly what this scan exists to catch -- weigh
+it honestly in the cautions or drop the card.
+"""
+
+_SESSION_FRAMING = {
+    "confirmation": _CONFIRMATION_FRAMING,
+}
+
+
 def _format_repeat_history(repeat_history: dict) -> str:
     """
     Render the day-over-day repeat-ticker context block. Expects
@@ -478,6 +522,12 @@ def _slim_zone(ticker: dict) -> dict:
 
 def build_messages(payload: dict) -> tuple[str, str]:
     """Return (system_prompt, user_message_json_string)."""
+    # Session-aware emphasis: same rubrics, but the confirmation scan (say) adds a
+    # block about intraday confirmation and change-since-premarket. Unknown/absent
+    # sessions run the base prompt unchanged.
+    session = str(payload.get("scan_session", "")).strip().lower()
+    system_prompt = SYSTEM_PROMPT + _SESSION_FRAMING.get(session, "")
+
     # Repeat-ticker history is passed alongside the payload (injected by main);
     # pull it out so it renders as a readable context block rather than raw JSON.
     repeat_history = payload.get("repeat_history") or {}
@@ -495,4 +545,4 @@ def build_messages(payload: dict) -> tuple[str, str]:
     history_block = _format_repeat_history(repeat_history)
     if history_block:
         user_content += "\n\n" + history_block
-    return SYSTEM_PROMPT, user_content
+    return system_prompt, user_content
