@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="refresh" content="300" />
-  <title>FlowScanner &mdash; Pulse session</title>
+  <title>FlowScanner &mdash; Premarket session</title>
   <style>
     :root {
       --bg: #0f1419;
@@ -64,6 +64,9 @@
     .card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 10px; }
     .ticker { font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
     .ticker small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 6px; }
+    /* Wrap so a full badge row (count + streak + zone + confidence) never overflows
+       the card and bleeds into the neighbour; flex-end keeps a wrapped row hugging
+       the right edge, consistent with the shared-row layout. */
     .badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
     .badge {
       font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
@@ -81,6 +84,37 @@
     .badge.zone-watch { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
     /* A WATCH card is a plan, not a trade -- it must never read as buy-it-now. */
     .card.watch { border-style: dashed; border-color: var(--blue); opacity: 0.85; }
+    /* Break-state pills for the breakout archetype: approaching (coiled, amber),
+       breaking (crossing now, green), extended (already broke, blue -- watch a retest). */
+    .badge.state-approaching { background: rgba(210,153,34,0.15); color: var(--amber); border: 1px solid var(--amber); }
+    .badge.state-breaking { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
+    .badge.state-extended { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
+    /* Breakout section: visually separated from the core setups with its own header,
+       a plain-language risk subheader, and a purple accent so it never blurs into the
+       higher-confidence core section above it. */
+    .breakout-section { margin-top: 48px; }
+    .section-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px;
+      border-top: 1px solid var(--border); padding-top: 26px; margin-bottom: 6px;
+    }
+    .section-head h2 { margin: 0; font-size: 20px; letter-spacing: 0.4px; }
+    .section-head h2 span { color: #a371f7; }
+    .risk-tag {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      color: #a371f7; background: rgba(163,113,247,0.12); border: 1px solid #a371f7;
+      border-radius: 20px; padding: 3px 10px;
+    }
+    .section-sub {
+      color: var(--muted); font-size: 13px; margin: 4px 0 20px; max-width: 760px;
+      border-left: 3px solid #a371f7; padding-left: 12px;
+    }
+    .breakout-section .card { border-top: 2px solid rgba(163,113,247,0.5); }
+    .break-banner {
+      font-size: 12.5px; color: var(--text); background: rgba(163,113,247,0.08);
+      border: 1px solid rgba(163,113,247,0.35); border-radius: 8px; padding: 7px 10px;
+    }
+    .break-banner strong { color: #a371f7; }
+    .empty.small { padding: 26px 20px; font-size: 13px; }
     .watch-note {
       font-size: 12px; color: var(--blue); background: rgba(88,166,255,0.08);
       border: 1px dashed rgba(88,166,255,0.4); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px;
@@ -106,6 +140,21 @@
       font-size: 12.5px; color: var(--text); padding-left: 18px; position: relative;
     }
     .signals li::before { content: "\2713"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+    /* Caution flags -- deliberately set apart from the green confluence checks with an
+       amber left border, so risks never blur into the reasons-to-take-it list. */
+    .cautions-box {
+      background: rgba(210,153,34,0.06); border-left: 3px solid var(--amber);
+      border-radius: 0 8px 8px 0; padding: 8px 12px; margin-top: 2px;
+    }
+    .cautions-label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--amber); font-weight: 700; margin-bottom: 6px;
+    }
+    .cautions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+    .cautions li {
+      font-size: 12px; color: var(--text); padding-left: 20px; position: relative; line-height: 1.4;
+    }
+    .cautions li::before { content: "\26A0"; position: absolute; left: 0; color: var(--amber); font-weight: 700; }
     .iv { font-size: 12px; color: var(--muted); font-style: italic; }
     .empty {
       text-align: center; padding: 60px 20px; color: var(--muted);
@@ -120,7 +169,7 @@
     <header class="top">
       <div>
         <h1><span>Flow</span>Scanner</h1>
-        <div class="session-time">Pulse session &middot; generated 2026-07-17 18:22:09 UTC</div>
+        <div class="session-time">Premarket session &middot; generated 2026-07-20 13:07:35 UTC</div>
       </div>
       <div class="session-time">Auto-refresh every 5 min</div>
     </header>
@@ -128,34 +177,34 @@
     <div class="macro-bar">
       <div class="macro-chip">
         <div class="k">SPY</div>
-        <div class="v bullish">Bullish @ 744.43</div>
+        <div class="v bullish">Bullish @ 743.29</div>
       </div>
       <div class="macro-chip">
         <div class="k">QQQ</div>
-        <div class="v bullish">Mildly Bullish @ 698.03</div>
+        <div class="v bullish">Mildly Bullish @ 695.33</div>
       </div>
       <div class="macro-chip">
         <div class="k">VIX</div>
-        <div class="v bullish">18.30 (normal)</div>
+        <div class="v bullish">18.18 (normal)</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tape</div>
-        <div class="v bullish">Firm &middot; 79% green</div>
+        <div class="v neutral">Mixed &middot; 68% green</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tickers Scanned</div>
-        <div class="v">33</div>
+        <div class="v">59</div>
       </div>
       <div class="macro-chip">
         <div class="k">Qualifying Setups</div>
-        <div class="v">2</div>
+        <div class="v">3</div>
       </div>
     </div>
 
     
 
     
-    <div class="summary">Intraday tape is firm — 78.8% of the universe green, median +2.45% from open, QQQ outperforming — but VIX is up 9.4% and most of the semi complex is bouncing inside confirmed daily downtrends, which are structural vetoes. Only names with intact bullish structure qualify; the bounce elsewhere is not a setup.</div>
+    <div class="summary">Intraday tape reads mixed but participation is actually healthy: 67.8% of the scanned universe is green and 75% sit above their 200-day averages, a breadth profile that supports taking selective longs rather than sitting out. VIX at 18.2 and falling 3.1% means fear is receding and call premium is not being bid up -- decent conditions for buying options. The catch is leadership: SPY holds a bullish trend above its rising 200-day, but QQQ and semis (SMH -10.8% vs SPY over 20 days) are broken, so the buyable setups today are concentrated in financials (XLF leading, +3.8% vs SPY) -- chase weak-sector tech bounces at your peril.</div>
     
 
     
@@ -163,191 +212,532 @@
       
       <div class="card">
         <div class="card-head">
-          <div class="ticker">JPM<small>CALLS</small></div>
+          <div class="ticker">BAC<small>CALLS</small></div>
           <div class="badges">
-            <span class="badge count">7 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">4th hit — stable</span><span class="badge zone-ext">EXTENDED 4.9%</span>
+            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">3rd hit — stable</span><span class="badge zone-in">IN ZONE</span>
             <span class="badge High">High</span>
           </div>
         </div>
 
         
 
-        <div class="thesis">JPM appears for a 5th consecutive session with confluence stable at 7 — the strongest repeat name in the scan. Price is coiled at the top of an 11-bar 326-351 range with a bullish stack beneath and cheap IV; a break of 351.24 projects a ~377 measured move. Note price is 4.9% extended above the 322.64-326.64 support shelf (3 touches), so the premium is best deployed on strength through the range high or a retest of that shelf, not blindly here; loss of the 325.75 range low invalidates the coil.</div>
+        <div class="thesis">BAC has coiled for eleven sessions at all-time-lookback highs in a leading sector with premium at rock-bottom IV rank, and price sits inside its computed 60.47-61.43 entry zone -- this is a base-and-break setup being bought at support, not chased. Note this is BAC&#39;s 3rd consecutive scan appearance with stable 6-signal confluence, a persistence that argues the coil is accumulation. A daily close above 62.12 confirms the breakout and opens the measured move to roughly 66.30; a close back under the 57.94 range low says the base has failed and the trade is wrong.</div>
 
         <div class="contract">
           <span class="k">Contract</span><br />
-          Exp <strong>2026-08-21</strong> (35d)
-          &middot; Strike <strong>340.0</strong>
-          &middot; Delta <strong>0.59</strong>
+          Exp <strong>2026-08-21</strong> (32d)
+          &middot; Strike <strong>60.0</strong>
+          &middot; Delta <strong>0.65</strong>
           <br />
-          Ask <strong>12.35</strong>
-          &middot; Breakeven <strong>352.35</strong>
-          &middot; OI <strong>4,049</strong>
+          Ask <strong>2.65</strong>
+          &middot; Breakeven <strong>62.65</strong>
+          &middot; OI <strong>14,492</strong>
         </div>
 
         <div class="grid2">
           <div class="metric">
             <div class="k">Entry Zone</div>
-            <div class="v zone">322.64–326.64
-                <span class="sub">4.9% below · 2.1 ATR · strong</span></div>
+            <div class="v zone">60.47–61.43
+                <span class="sub">price is here now · moderate</span></div>
           </div>
           <div class="metric">
             <div class="k">Option R/R</div>
-            <div class="v rr">2.40
-              <span style="font-size:11px;color:var(--muted)">&rarr; 9.61 at zone*</span> <span class="sub">stock 1.8 &middot; entry 343.32</span></div>
+            <div class="v rr">1.68
+              <span style="font-size:11px;color:var(--blue)">&rarr; 1.95 at zone</span> <span class="sub">stock 1.5 &middot; entry 61.27</span></div>
           </div>
           <div class="metric">
             <div class="k">Target</div>
-            <div class="v target">376.70</div>
+            <div class="v target">66.30</div>
           </div>
           <div class="metric">
             <div class="k">Stop</div>
-            <div class="v stop">325.00</div>
+            <div class="v stop">57.94</div>
           </div>
         </div>
 
         
         <div class="zone-levels">
-          Zone: Daily pivot low 325.01 &middot; Daily pivot low 325.75 &middot; Range low 325.75 &middot; EMA50 323.53 &middot; <span class="held">held 3&times;</span>
+          Zone: 10d AVWAP 60.86 &middot; Prior day low 60.99 &middot; Session VWAP 61.43 &middot; EMA8 60.47
         </div>
         
 
         <ul class="signals">
           
-          <li>Trend alignment: full bullish daily EMA stack, weekly close above ema21</li>
+          <li>Trend alignment: price above the 8/21/50/200-day stack with the weekly close above its 21-week average -- every timeframe of buyer is in profit and defending dips</li>
           
-          <li>Momentum: daily RSI 62.9, weekly RSI 66.5, MACD hist positive</li>
+          <li>Momentum: daily RSI 70 with MACD positive and rising -- buyers are firmly in control heading into the range top</li>
           
-          <li>Volatility setup: IV rank 24.6 is cheap with ATR room to the measured target</li>
+          <li>Volatility setup: IV rank 13.6 -- option premium is near its cheapest of the year, so calls are inexpensive relative to the stock&#39;s own history</li>
           
-          <li>Options market: put/call 0.53, low IV rank favors long premium</li>
+          <li>Options market: cheap IV plus heavy near-the-money call open interest (14k+ at the 60 strike) -- the market for this trade is liquid and not overpriced</li>
           
-          <li>Smart money flow: net call premium +$0.68M bought, bullish premium edges bearish</li>
+          <li>Macro/sector: XLF is in an uptrend and leading SPY by 3.8% over 20 days while BAC beats SPY by 8% -- the whole group is pulling this name higher</li>
           
-          <li>Macro alignment: SPY bullish above EMA200, VIX normal, JPM +2.5% vs SPY over 20d</li>
-          
-          <li>Market structure: 11-bar consolidation, price above last pivot high, 2.3% under range high 351.24</li>
+          <li>Market structure: at its lookback highs inside an 11-bar consolidation, just 1.4% under the 62.12 range top -- coiled with no overhead supply above</li>
           
         </ul>
 
         
+
+        
         <div class="iv">
-          Contract modelled at 1046 at risk per contract
-          &middot; worth ~37.49 at target,
-          ~1.89 at stop
+          Contract modelled at 224 at risk per contract
+          &middot; worth ~6.42 at target,
+          ~0.41 at stop
           <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
         </div>
         
 
         
         <div class="iv">
-          At zone ~324.64: premium
-          ~4.16
-          (vs 12.35 now) &middot; delta ~0.29
-          &middot; stop 316.65
-          <br /><span style="color:var(--amber)">*this strike is far OTM down there (delta
-          0.29) -- the at-zone ratio is flattered by a
-          near-worthless premium. At that price you would want a nearer strike.</span>
+          At zone ~60.95: premium
+          ~2.45
+          (vs 2.65 now) &middot; delta ~0.62
+          &middot; stop 57.94
         </div>
         
 
         
-        <div class="iv">IV: IV rank 24.6 with 23.4% contract IV is cheap for a mega-cap financial — favorable for buying premium into a range break.</div>
+        <div class="iv">IV: Cheap -- IV rank 13.6 means you are paying near the lowest premium of the past year for upside exposure, ideal conditions for buying calls.</div>
         
       </div>
       
       <div class="card">
         <div class="card-head">
-          <div class="ticker">NVDA<small>CALLS</small></div>
+          <div class="ticker">WFC<small>CALLS</small></div>
           <div class="badges">
-            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">5th hit — stable</span><span class="badge zone-ext">EXTENDED 1.3%</span>
+            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid #3fb950;">3rd hit — stable</span><span class="badge zone-ext">EXTENDED 4.2%</span>
             <span class="badge High">High</span>
           </div>
         </div>
 
         
 
-        <div class="thesis">NVDA logs its 5th consecutive scan appearance with confluence stable at 6 — a daily uptrend coiled inside a 6-week weekly base whose measured move projects ~238 on a break of 214. Entry zone (197.45-201.19) is only marginally below, so the current price is a fair reference rather than a chase, but a dip toward 199-201 improves the premium. A close below the 189.8 range low breaks the higher-low sequence and kills the thesis; 35 DTE fits the larger measured-move objective, and earnings (Aug 26) fall after expiry.</div>
+        <div class="thesis">WFC is a leading-sector financial coiling under its range high with cheap premium; this is its 3rd consecutive scan appearance with stable 6-signal confluence, so the setup is persisting rather than decaying. Price is 4.2% above the 81.95-83.83 support shelf, so today&#39;s entry is somewhat extended -- the setup is real but a dip toward 84 is the cleaner buy. A daily close above 89.79 confirms the breakout and targets the measured move near 95.75; a close back below the 83.83 range low breaks the higher-low sequence and invalidates the trade.</div>
 
         <div class="contract">
           <span class="k">Contract</span><br />
-          Exp <strong>2026-08-21</strong> (35d)
-          &middot; Strike <strong>200.0</strong>
-          &middot; Delta <strong>0.60</strong>
+          Exp <strong>2026-08-21</strong> (32d)
+          &middot; Strike <strong>87.5</strong>
+          &middot; Delta <strong>0.53</strong>
           <br />
-          Ask <strong>12.45</strong>
-          &middot; Breakeven <strong>212.45</strong>
-          &middot; OI <strong>25,765</strong>
+          Ask <strong>2.88</strong>
+          &middot; Breakeven <strong>90.38</strong>
+          &middot; OI <strong>3,893</strong>
         </div>
 
         <div class="grid2">
           <div class="metric">
             <div class="k">Entry Zone</div>
-            <div class="v zone">197.45–201.19
-                <span class="sub">1.3% below · 0.4 ATR · moderate</span></div>
+            <div class="v zone">81.95–83.83
+                <span class="sub">4.2% below · 1.7 ATR · strong</span></div>
           </div>
           <div class="metric">
             <div class="k">Option R/R</div>
-            <div class="v rr">2.83
-              <span style="font-size:11px;color:var(--blue)">&rarr; 4.29 at zone</span> <span class="sub">stock 2.4 &middot; entry 203.89</span></div>
+            <div class="v rr">2.38
+              <span style="font-size:11px;color:var(--muted)">&rarr; 7.55 at zone*</span> <span class="sub">stock 2.2 &middot; entry 87.51</span></div>
           </div>
           <div class="metric">
             <div class="k">Target</div>
-            <div class="v target">238.20</div>
+            <div class="v target">95.75</div>
           </div>
           <div class="metric">
             <div class="k">Stop</div>
-            <div class="v stop">189.50</div>
+            <div class="v stop">83.83</div>
           </div>
         </div>
 
         
         <div class="zone-levels">
-          Zone: Daily pivot low 199.34 &middot; Daily support 199.34 &middot; Weekly EMA21 199.31 &middot; <span class="held">held 2&times;</span>
+          Zone: Daily pivot low 81.95 &middot; Daily pivot low 82.52 &middot; Daily pivot low 83.83 &middot; Daily support 83.83 &middot; Range low 83.83 &middot; Weekly EMA21 82.84 &middot; EMA50 83.32 &middot; <span class="held">held 3&times;</span>
         </div>
         
 
         <ul class="signals">
           
-          <li>Trend alignment: bullish daily EMA stack, price above EMA200, weekly above ema21</li>
+          <li>Trend alignment: price above the full 8/21/50/200-day EMA stack and the weekly close above its 21-week average -- the trend is up on both timeframes</li>
           
-          <li>Momentum: daily MACD crossed positive (hist +1.25), weekly RSI 53.7 constructive</li>
+          <li>Momentum: daily RSI 59 with weekly RSI 57 and MACD flat-to-positive -- steady buying pressure with plenty of room before overbought</li>
           
-          <li>Options market: put/call 0.53 bullish skew, heavy call OI clustered at 210/215/220</li>
+          <li>Volatility setup: IV rank 25.8 -- premium is cheap for entry, and the 5.96-point consolidation gives a defined measured move worth ~2.6x the ATR</li>
           
-          <li>Smart money flow: net call premium +$5.6M bought, day net calls +$10.6M, bullish premium exceeds bearish</li>
+          <li>Options market: low IV rank makes long calls attractively priced, with solid open interest at the at-the-money 87.5 strike</li>
           
-          <li>Macro alignment: +0.74% from open, outperforming SPY&#39;s +0.32% on a firm tape</li>
+          <li>Macro/sector: XLF uptrend leading SPY by 3.8% over 20 days and WFC beating SPY by 4.1% -- sector tailwind at the trader&#39;s back</li>
           
-          <li>Market structure: daily HH/HL uptrend coiled inside a 6-week 189.8-213.99 weekly consolidation, ~5% under range high</li>
+          <li>Market structure: daily uptrend consolidating in an 11-bar range just 2.6% below the 89.79 range high -- a tight coil under resistance in an uptrend</li>
           
         </ul>
 
         
+        <div class="cautions-box">
+          <div class="cautions-label">Weigh these risks</div>
+          <ul class="cautions">
+            
+            <li>Extended positioning: price is 4.2% (1.7 ATR) above the 81.95-83.83 entry zone that has held 3 times -- buying here is paying up; the premium works better on a pullback toward that shelf</li>
+            
+          </ul>
+        </div>
+        
+
+        
         <div class="iv">
-          Contract modelled at 931 at risk per contract
-          &middot; worth ~38.78 at target,
-          ~3.14 at stop
+          Contract modelled at 235 at risk per contract
+          &middot; worth ~8.47 at target,
+          ~0.53 at stop
           <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
         </div>
         
 
         
         <div class="iv">
-          At zone ~199.32: premium
-          ~9.88
-          (vs 12.45 now) &middot; delta ~0.53
-          &middot; stop 189.50
+          At zone ~82.89: premium
+          ~1.07
+          (vs 2.88 now) &middot; delta ~0.26
+          &middot; stop 80.31
+          <br /><span style="color:var(--amber)">*this strike is far OTM down there (delta
+          0.26) -- the at-zone ratio is flattered by a
+          near-worthless premium. At that price you would want a nearer strike.</span>
         </div>
         
 
         
-        <div class="iv">IV: IV rank 45.5 with ~42% contract IV is mid-range — not cheap, but reasonable for a defined weekly-base breakout with a target well past breakeven.</div>
+        <div class="iv">IV: Cheap -- IV rank 25.8 keeps the at-the-money call at ~3.3% of stock price for 32 days, favorable for outright call buying.</div>
+        
+      </div>
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">FHN<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">6 confluences</span><span class="badge" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922;">2nd hit</span><span class="badge zone-ext">EXTENDED 3.3%</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        
+
+        <div class="thesis">FHN pairs the cheapest IV in its own history with a single $10.4M institutional call purchase struck above the range top -- someone large is paying for the breakout while the premium costs almost nothing. This is its 2nd consecutive scan appearance (7 confluences yesterday, 6 today, essentially stable). Price is 3.3% above the 24.42-24.94 support zone, so entries here are slightly extended. A daily close above 26.31 confirms the range break and targets the measured move near 28.20; a close back under the 24.42 range low breaks the base and kills the thesis.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong> (32d)
+          &middot; Strike <strong>26.0</strong>
+          &middot; Delta <strong>0.49</strong>
+          <br />
+          Ask <strong>0.85</strong>
+          &middot; Breakeven <strong>26.85</strong>
+          &middot; OI <strong>3,788</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Zone</div>
+            <div class="v zone">24.42–24.94
+                <span class="sub">3.3% below · 1.4 ATR · strong</span></div>
+          </div>
+          <div class="metric">
+            <div class="k">Option R/R</div>
+            <div class="v rr">1.86
+              <span style="font-size:11px;color:var(--muted)">&rarr; 4.62 at zone*</span> <span class="sub">stock 1.7 &middot; entry 25.80</span></div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">28.20</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">24.42</div>
+          </div>
+        </div>
+
+        
+        <div class="zone-levels">
+          Zone: Daily pivot low 24.49 &middot; Daily pivot low 24.86 &middot; Daily support 24.86 &middot; Range low 24.42 &middot; Weekly EMA21 24.53 &middot; EMA50 24.94 &middot; Prior day low 24.69 &middot; <span class="held">held 3&times;</span>
+        </div>
+        
+
+        <ul class="signals">
+          
+          <li>Trend alignment: price above the bullish 8/21/50/200-day stack with the weekly in a confirmed uptrend -- buyers control every timeframe</li>
+          
+          <li>Momentum: daily RSI 57 and weekly RSI 62 -- constructive momentum with room to run before overbought</li>
+          
+          <li>Volatility setup: IV rank 0.0 -- the absolute cheapest option premium this name has offered in a year</li>
+          
+          <li>Options market: rock-bottom IV plus a massive 100k-contract call open-interest cluster at the Nov 27 strike -- positioning is skewed decisively bullish</li>
+          
+          <li>Smart money flow: $10.4M of Nov 27-strike calls bought on the ask, the day&#39;s entire flow print, with net call premium strongly positive -- institutional money is positioned above the range</li>
+          
+          <li>Macro/sector: XLF uptrend leading SPY by 3.8% over 20 days with FHN outperforming SPY by 4% -- the group is doing the heavy lifting</li>
+          
+          <li>Market structure: a 27-bar consolidation inside a weekly uptrend, price just 2% below the 26.31 range top -- a long, tight base ready to resolve higher</li>
+          
+        </ul>
+
+        
+        <div class="cautions-box">
+          <div class="cautions-label">Weigh these risks</div>
+          <ul class="cautions">
+            
+            <li>Flow concentration: the entire bullish flow read rests on one $10.4M print -- a single ticket can be a hedge rather than a directional bet, so the smart-money signal is thinner than the headline size suggests</li>
+            
+            <li>Extended positioning: price is 3.3% (1.4 ATR) above the 24.42-24.94 entry zone -- the cleaner entry is a fade back into that shelf</li>
+            
+            <li>Earnings date is UNKNOWN (calendar gap) -- an unannounced report inside the 32-day hold would be an unmodeled binary risk</li>
+            
+          </ul>
+        </div>
+        
+
+        
+        <div class="iv">
+          Contract modelled at 77 at risk per contract
+          &middot; worth ~2.28 at target,
+          ~0.08 at stop
+          <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+        </div>
+        
+
+        
+        <div class="iv">
+          At zone ~24.68: premium
+          ~0.43
+          (vs 0.85 now) &middot; delta ~0.27
+          &middot; stop 23.97
+          <br /><span style="color:var(--amber)">*this strike is far OTM down there (delta
+          0.27) -- the at-zone ratio is flattered by a
+          near-worthless premium. At that price you would want a nearer strike.</span>
+        </div>
+        
+
+        
+        <div class="iv">IV: Extremely cheap -- IV rank 0 means premium is at its 52-week low, the best possible pricing environment for buying calls.</div>
         
       </div>
       
     </div>
     
+
+    <section class="breakout-section">
+      <div class="section-head">
+        <h2><span>Breakout</span> watch</h2>
+        <span class="risk-tag">Higher risk &middot; earlier stage</span>
+      </div>
+      <p class="section-sub">
+        Setups breaking out of a base &mdash; caught <strong>earlier</strong> than the core
+        setups above, on <strong>fewer confirming signals</strong>. That is the point and the
+        risk: the entries are timelier but less confirmed, so treat these as ideas to watch,
+        not with the same confidence as the core section. Each card shows where price sits in
+        the break (approaching / breaking / extended) and the level it is clearing.
+      </p>
+
+      
+      <div class="cards">
+        
+        <div class="card breakout">
+          <div class="card-head">
+            <div class="ticker">VG<small>CALLS</small></div>
+            <div class="badges"><span class="badge count">6 breakout pts</span>
+              <span class="badge state-breaking">BREAKING</span>
+              <span class="badge zone-ext">EXTENDED 2.5%</span>
+              <span class="badge Medium">Medium</span>
+            </div>
+          </div>
+
+          
+          <div class="break-banner">Breaking
+            the <strong>13.81</strong> level &middot; breaking.
+          </div>
+          
+
+          
+
+          <div class="thesis">VG is punching through its 13.81 multi-week pivot high on 1.66x volume with energy the market&#39;s leading sector, and the contract deliberately expires before the Aug 11 earnings report (18 DTE vs 22 days to earnings) to avoid the binary gap. A daily close above 13.82 on this volume confirms the breakout and projects an ATR-based move toward 15.58; a close back below the reclaimed 13.29 pivot says the break failed and the trade is wrong.</div>
+
+          <div class="contract">
+            <span class="k">Contract</span><br />
+            Exp <strong>2026-08-07</strong> (18d)
+            &middot; Strike <strong>13.5</strong>
+            &middot; Delta <strong>0.59</strong>
+            <br />
+            Ask <strong>1.15</strong>
+            &middot; Breakeven <strong>14.65</strong>
+            &middot; OI <strong>107</strong>
+          </div>
+
+          <div class="grid2">
+            <div class="metric">
+              <div class="k">Entry Zone</div>
+              <div class="v zone">11.87–13.45
+                  <span class="sub">2.5% below · 0.5 ATR · strong</span></div>
+            </div>
+            <div class="metric">
+              <div class="k">Option R/R</div>
+              <div class="v rr">1.51
+                <span style="font-size:11px;color:var(--blue)">&rarr; 2.74 at zone</span> <span class="sub">stock 3.5 &middot; entry 13.80</span></div>
+            </div>
+            <div class="metric">
+              <div class="k">Target</div>
+              <div class="v target">15.58</div>
+            </div>
+            <div class="metric">
+              <div class="k">Stop</div>
+              <div class="v stop">13.29</div>
+            </div>
+          </div>
+
+          
+          <div class="zone-levels">
+            Zone: Weekly support 11.87 &middot; Daily pivot low 12.11 &middot; Daily support 12.11 &middot; Weekly EMA21 12.13 &middot; EMA50 12.28 &middot; EMA21 12.30 &middot; 10d AVWAP 13.11 &middot; Prior day low 12.65 &middot; Session VWAP 13.45 &middot; EMA8 12.82 &middot; <span class="held">held 2&times;</span>
+          </div>
+          
+
+          <ul class="signals">
+            
+            <li>Trend/momentum context: price above the bullish 8/21/50/200-day stack with RSI 63.5 -- momentum confirming the move without being stretched</li>
+            
+            <li>Volume expansion: relative volume 1.66 on the break bar -- meaningfully above average, the single most important breakout confirmation</li>
+            
+            <li>Proximity to level: price at 13.80 is crossing the 13.81/13.82 pivot-high resistance right now -- this is the trigger, not a chase</li>
+            
+            <li>Retest quality: first clean thrust through the level after basing above the reclaimed 13.29 prior pivot -- constructive break behavior</li>
+            
+            <li>Flow confirming: net call premium +$361k with buys at the 14.5 and 20 strikes at-and-above the breakout level -- directional money positioned for this move</li>
+            
+            <li>Macro/sector alignment: XLE in an uptrend leading SPY by 5.2% over 20 days while VG is +5.8% from the open on a mixed tape -- sector and tape both cooperating</li>
+            
+          </ul>
+
+          
+          <div class="cautions-box">
+            <div class="cautions-label">Weigh these risks</div>
+            <ul class="cautions">
+              
+              <li>Failed-breakout history: price tagged this same 13.82 level before and was rejected all the way to 10.26 -- the level has beaten this stock once already</li>
+              
+              <li>Choppy base: there is no tight consolidation beneath the break (daily structure reads choppy), so the launch pad is looser than ideal</li>
+              
+              <li>Flow concentration/liquidity: the confirming call flow is small in absolute size and the chosen strike carries only 107 open interest with a ~17% spread -- size positions modestly</li>
+              
+            </ul>
+          </div>
+          
+
+          
+          <div class="iv">
+            Contract modelled at 67 at risk per contract
+            &middot; worth ~2.16 at target,
+            ~0.48 at stop
+            <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+          </div>
+          
+
+          
+          <div class="iv">IV: Moderately elevated -- IV rank 55.8 means premium is mid-range, acceptable but not cheap, so the volume-confirmed break needs to follow through quickly against theta on an 18-day contract.</div>
+          
+        </div>
+        
+        <div class="card breakout">
+          <div class="card-head">
+            <div class="ticker">BAC<small>CALLS</small></div>
+            <div class="badges"><span class="badge count">4 breakout pts</span>
+              <span class="badge state-approaching">APPROACHING</span>
+              <span class="badge zone-in">IN ZONE</span>
+              <span class="badge Medium">Medium</span>
+            </div>
+          </div>
+
+          
+          <div class="break-banner">Coiled below
+            the <strong>62.12</strong> level &middot; approaching.
+          </div>
+          
+
+          
+
+          <div class="thesis">BAC is pressed against the 62.12 top of an 11-session base at lookback highs while its sector leads the market -- the breakout has not triggered yet, so this is a plan, not an entry. A push through 62.12 on expanding volume (relative volume 1.3+) confirms the break and opens the measured move to about 66.30; a close back under the 57.94 range low means the coil failed and the setup is dead.</div>
+
+          <div class="contract">
+            <span class="k">Contract</span><br />
+            Exp <strong>2026-08-21</strong> (32d)
+            &middot; Strike <strong>60.0</strong>
+            &middot; Delta <strong>0.65</strong>
+            <br />
+            Ask <strong>2.65</strong>
+            &middot; Breakeven <strong>62.65</strong>
+            &middot; OI <strong>14,492</strong>
+          </div>
+
+          <div class="grid2">
+            <div class="metric">
+              <div class="k">Entry Zone</div>
+              <div class="v zone">60.47–61.43
+                  <span class="sub">price is here now · moderate</span></div>
+            </div>
+            <div class="metric">
+              <div class="k">Option R/R</div>
+              <div class="v rr">1.68
+                <span style="font-size:11px;color:var(--blue)">&rarr; 1.95 at zone</span> <span class="sub">stock 1.5 &middot; entry 61.27</span></div>
+            </div>
+            <div class="metric">
+              <div class="k">Target</div>
+              <div class="v target">66.30</div>
+            </div>
+            <div class="metric">
+              <div class="k">Stop</div>
+              <div class="v stop">57.94</div>
+            </div>
+          </div>
+
+          
+          <div class="zone-levels">
+            Zone: 10d AVWAP 60.86 &middot; Prior day low 60.99 &middot; Session VWAP 61.43 &middot; EMA8 60.47
+          </div>
+          
+
+          <ul class="signals">
+            
+            <li>Trend/momentum context: price above the full EMA stack with daily RSI 70 -- in breakout terms that RSI is momentum confirmation, not an overbought warning</li>
+            
+            <li>Proximity to level: price sits 1.4% under the 62.12 range top with no confirmed pivot above -- coiled directly beneath the trigger</li>
+            
+            <li>Base tightness: an 11-bar, 7.2%-wide consolidation with ATR essentially flat -- an orderly coil rather than a whippy range</li>
+            
+            <li>Macro/sector alignment: XLF leading SPY by 3.8% over 20 days on a mixed-but-broad tape (68% of names green) -- the group supports the break</li>
+            
+          </ul>
+
+          
+          <div class="cautions-box">
+            <div class="cautions-label">Weigh these risks</div>
+            <ul class="cautions">
+              
+              <li>Volume didn&#39;t confirm yet: relative volume is only 1.23 with the level untouched -- do not treat a low-volume poke above 62.12 as a real break</li>
+              
+              <li>Institutional call flow was net SOLD today (-$2.4M net call premium) -- big money has not yet paid up for this breakout</li>
+              
+            </ul>
+          </div>
+          
+
+          
+          <div class="iv">
+            Contract modelled at 224 at risk per contract
+            &middot; worth ~6.42 at target,
+            ~0.41 at stop
+            <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+          </div>
+          
+
+          
+          <div class="iv">IV: Cheap -- IV rank 13.6 lets you position for the break before volatility gets repriced higher on the move.</div>
+          
+        </div>
+        
+      </div>
+      
+    </section>
 
     <footer>
       FlowScanner &middot; for research and educational use only &middot; not investment advice.
