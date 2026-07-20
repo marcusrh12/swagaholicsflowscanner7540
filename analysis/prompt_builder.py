@@ -248,13 +248,27 @@ RULES:
   put a disqualifier here -- a real veto means you drop the card, not caution it.
 
 SETUP ARCHETYPES -- CORE PLUS BREAKOUT:
-Everything above is the CORE rubric and it is unchanged. Separately, and IN PARALLEL,
-evaluate each ticker against the BREAKOUT rubric below. Think of "which archetype is
-this?" as a classification step: a ticker can qualify for the CORE section, the
-BREAKOUT section, BOTH, or NEITHER, and the two evaluations do not interact. A name
-already in `trade_cards` may ALSO appear in `breakout_cards` if it independently clears
-the breakout rubric, and vice versa. Never drop a breakout candidate merely because it
-did not qualify as a core setup -- they are scored on different criteria.
+Everything above is the CORE rubric and it is unchanged. Separately, evaluate each
+ticker against the BREAKOUT rubric below. Think of "which archetype is this?" as a
+classification step, and the two sections are COMPLEMENTARY, not overlapping: the
+BREAKOUT section exists to surface names that are EARLIER in their move than a core
+setup -- names that have NOT yet earned a core card.
+
+  STRONG DEFAULT -- NEARLY MUTUALLY EXCLUSIVE: if a name already qualifies as a clean
+  CORE setup (an established, confirmed swing setup: full/near-full EMA stack, trend
+  already in motion, sitting in its core entry zone), it belongs in `trade_cards` ONLY.
+  Do NOT also emit a breakout card for it. A core setup is by definition past the
+  earlier-stage window the breakout section is for, so a name appearing in BOTH arrays
+  should be the rare exception, not the norm -- treat any overlap as a signal you have
+  mis-classified the name, and put it where it fits best rather than in both.
+
+  What the breakout section IS for: names genuinely earlier in the move --
+  * COILING UNDER a level (the classic pre-breakout coil that has not triggered), or
+  * FRESHLY BREAKING through it now,
+  that have not yet built the confirmation a core setup requires. That earlier, less-
+  confirmed posture is the whole point of the section and exactly why it is flagged
+  higher-risk. A name that did not qualify as a core setup is NOT disqualified here --
+  scored on the breakout criteria it may well fire; that is expected and correct.
 
 BREAKOUT RUBRIC (higher-risk, earlier-stage -- see the note after the categories):
 A breakout is price clearing a clearly defined resistance (a prior swing high or the
@@ -307,13 +321,22 @@ breakout-specific categories and count how many fire:
   signals, which is precisely why this section is flagged as higher-risk. Confidence is
   still HIGH or MEDIUM only; drop low-confidence breakouts entirely.
 
-BREAK STATE -- classify every breakout candidate as EXACTLY ONE of:
+BREAK STATE -- classify every breakout candidate as EXACTLY ONE of. The section's
+center of gravity is firmly the first two states ("approaching" and fresh "breaking"):
+those ARE the earlier-stage window this section exists for, and most breakout cards
+should be one of them.
   * "approaching" -- coiled JUST BELOW the level, not yet triggered. The volume surge
-    has not happened yet, so B3 is NOT required for this state.
+    has not happened yet, so B3 is NOT required for this state. This is the archetypal
+    breakout card -- prefer it.
   * "breaking"    -- crossing the level NOW. REQUIRES volume confirmation
     (`daily.rel_volume` >= {config.BREAKOUT_MIN_RVOL_ON_BREAK}); a break here on flat/light volume does NOT qualify.
   * "extended"    -- already broke and is watching for a retest entry. ALSO requires
-    volume confirmation on the break (same gate as "breaking").
+    volume confirmation on the break (same gate as "breaking"). Use "extended"
+    SPARINGLY, and ONLY for a name that is NOT also a clean core setup -- e.g. one that
+    broke out but is core-vetoed for its OWN reasons (its own R/R gone, its own
+    structure, an imminent-earnings-adjacent posture). An "extended" name that also
+    reads as a mature core setup is a CORE card, not a breakout card -- do not put it
+    here just because it cleared a level.
   Report the chosen state as `break_state`. A "breaking" or "extended" candidate whose
   `daily.rel_volume` is missing or below the threshold must be DROPPED, not downgraded.
 

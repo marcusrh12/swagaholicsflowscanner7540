@@ -202,11 +202,34 @@ def _dollar_vol(row: dict) -> float:
         return 0.0
 
 
+def _take_capped(rows: list[dict], total: int, per_sector: int) -> list[dict]:
+    """
+    Take up to `total` rows, capping how many share a sector ETF at `per_sector` so a
+    single hot group can't monopolize the leadership tail. `rows` must already be sorted
+    in the desired priority order (most-liquid first); this only enforces the caps.
+    """
+    picked: list[dict] = []
+    per_etf: dict[str, int] = {}
+    for r in rows:
+        if len(picked) >= total:
+            break
+        etf = sector_etf.etf_for(r.get("sector"), r.get("industry"))
+        if per_etf.get(etf, 0) >= per_sector:
+            continue
+        per_etf[etf] = per_etf.get(etf, 0) + 1
+        picked.append(r)
+    return picked
+
+
 async def _select_universe(
-    fmp: FMPClient, screener_rows: list[dict], earnings_map: dict[str, str]
+    fmp: FMPClient,
+    screener_rows: list[dict],
+    earnings_map: dict[str, str],
+    sector_etf_data: dict | None = None,
+    spy_returns: dict | None = None,
 ) -> list[dict]:
     """
-    Build the scan universe as a STABLE CORE plus a ROTATING TAIL.
+    Build the scan universe as a STABLE CORE plus a ROTATING TAIL plus a LEADERSHIP TAIL.
 
     Ranking purely by dollar volume (the old behaviour) is very nearly ranking by
     market cap: mega-cap dollar volume is stable day to day, so the scanned list was
@@ -223,6 +246,11 @@ async def _select_universe(
       * ROTATE -- top N by RELATIVE volume (today vs its own 20-day average) among
                   liquid names. This is what surfaces the mid-cap breaking out on 5x
                   its normal turnover.
+      * LEADERSHIP -- a few names from sectors just STARTING TO TURN UP (their ETF is
+                  accelerating -- see sector_etf.sector_improving), even when they are
+                  neither top-dollar-volume nor high-relvol. This catches early sector
+                  rotation the other two tails miss. Discovery-only, like ROTATE: it
+                  never anchors streaks.
 
     Relative volume needs a volume history FMP's screener doesn't carry, so it is
     computed only for a pre-screen pool (ranked by turnover, a zero-cost proxy for
@@ -282,7 +310,52 @@ async def _select_universe(
             config.MIN_RELVOL,
         )
 
-    selected = core + rotate
+    # LEADERSHIP tail: names from sectors just starting to turn up. Ranked by SECTOR
+    # momentum (not the name's own volume), so it catches early rotation the dollar-
+    # volume/relvol tails miss -- e.g. a semis name when SMH is accelerating out of a
+    # base while the group still looks weak on 20 days. Discovery-only.
+    leadership: list[dict] = []
+    sector_scores: list[tuple[str, float]] = []
+    already = core_syms | {r["symbol"] for r in rotate}
+    if sector_etf_data:
+        spy_rets = spy_returns or {}
+        # Rank the sectors present in the eligible set by how strongly they are improving.
+        candidate_etfs = {
+            sector_etf.etf_for(r.get("sector"), r.get("industry")) for r in eligible
+        } - {None}
+        for etf in sorted(candidate_etfs):
+            ok, accel = sector_etf.sector_improving(sector_etf_data.get(etf), spy_rets)
+            if ok:
+                sector_scores.append((etf, accel))
+        sector_scores.sort(key=lambda x: x[1], reverse=True)
+        lead_etfs = {e for e, _ in sector_scores[: config.LEADERSHIP_SECTOR_COUNT]}
+
+        # From those sectors, take the most-liquid names not already selected. Liquidity
+        # ordering (same rationale as the ROTATE pre-screen) selects for tradable chains.
+        lead_pool = [
+            r
+            for r in eligible
+            if r["symbol"] not in already
+            and sector_etf.etf_for(r.get("sector"), r.get("industry")) in lead_etfs
+            and _dollar_vol(r) >= config.MIN_DOLLAR_VOLUME
+        ]
+        lead_pool.sort(key=_dollar_vol, reverse=True)
+        leadership = _take_capped(
+            lead_pool, config.LEADERSHIP_SLOTS, config.LEADERSHIP_PER_SECTOR_MAX
+        )
+
+    if leadership:
+        logger.info(
+            "Leadership tail (improving sectors %s): %s",
+            ", ".join(
+                f"{e}(+{a})" for e, a in sector_scores[: config.LEADERSHIP_SECTOR_COUNT]
+            ),
+            ", ".join(r["symbol"] for r in leadership),
+        )
+    elif sector_etf_data and not sector_scores:
+        logger.info("Leadership tail: no sector cleared the improving-momentum test")
+
+    selected = core + rotate + leadership
     if len(selected) < config.TARGET_MIN_TICKERS:
         logger.warning(
             "Post-filter universe is %s (< target floor %s); proceeding anyway",
@@ -290,10 +363,12 @@ async def _select_universe(
             config.TARGET_MIN_TICKERS,
         )
     logger.info(
-        "Selected %s tickers (%s core by dollar volume + %s rotating by relative volume)",
+        "Selected %s tickers (%s core by dollar volume + %s rotating by relative "
+        "volume + %s leadership by sector momentum)",
         len(selected),
         len(core),
         len(rotate),
+        len(leadership),
     )
     return selected
 
@@ -340,47 +415,57 @@ async def run_scan(session_name: str, force: bool = False) -> None:
                 )
                 return
 
-        # Macro FMP data + screener + earnings + VIX in parallel.
+        # Macro FMP data + screener + earnings + VIX + the sector ETFs, all in parallel.
+        # The sector ETFs are a FIXED ~12-symbol set (sector_etf.all_etfs()) and are
+        # fetched HERE -- before universe selection -- because the LEADERSHIP tail ranks
+        # sectors by their ETF momentum at selection time. This is the SAME fetch that
+        # later feeds each ticker's sector_context, so we do it once up front and reuse
+        # it: net-zero API calls versus the old post-selection fetch, just moved earlier.
         macro_tasks = {sym: fmp.get_ticker_data(sym) for sym in config.MACRO_TICKERS}
+        etf_tasks = {e: fmp.get_ticker_data(e) for e in sorted(sector_etf.all_etfs())}
         (
             screener_rows,
             earnings_map,
             vix_data,
-            *macro_results,
+            *rest,
         ) = await asyncio.gather(
             fmp.screen_universe(),
             fmp.earnings_map(),
             get_vix(http),
             *macro_tasks.values(),
+            *etf_tasks.values(),
         )
-        macro_fmp = dict(zip(macro_tasks.keys(), macro_results))
+        macro_fmp = dict(zip(macro_tasks.keys(), rest[: len(macro_tasks)]))
+        sector_etf_data = dict(zip(etf_tasks.keys(), rest[len(macro_tasks):]))
 
-        # Build the tradable universe (needs the client: the rotating tail is ranked
-        # on relative volume, which requires a volume history per candidate).
-        universe = await _select_universe(fmp, screener_rows, earnings_map)
+        # SPY returns for relative-strength math (sector-vs-SPY, leadership ranking).
+        # Needed BEFORE selection now that the leadership tail uses it.
+        spy_data = macro_fmp.get("SPY") or {}
+        spy_returns = spy_data.get("returns", {}) if spy_data else {}
+
+        # Build the tradable universe. Needs the client (the rotating tail is ranked on
+        # relative volume, which requires a volume history per candidate) and the sector
+        # ETF data (the leadership tail is ranked on sector momentum).
+        universe = await _select_universe(
+            fmp,
+            screener_rows,
+            earnings_map,
+            sector_etf_data=sector_etf_data,
+            spy_returns=spy_returns,
+        )
         screener_by_symbol = {r["symbol"]: r for r in universe}
         symbols = list(screener_by_symbol.keys())
 
-        # Resolve each scanned name to its sector ETF, then fetch the DISTINCT set of
-        # ETFs once (a dozen symbols at most, shared across the whole universe) rather
-        # than per ticker. Fetched via the same get_ticker_data path as SPY/QQQ so the
-        # ETF carries EMAs and returns for the sector-context read.
+        # Resolve each scanned name to its sector ETF. The ETF DATA is already in hand
+        # from the macro gather above; this map just records which ETF each name uses so
+        # aggregation can attach the right sector_context.
         etf_by_symbol = {
             sym: sector_etf.etf_for(row.get("sector"), row.get("industry"))
             for sym, row in screener_by_symbol.items()
         }
-        needed_etfs = sorted({e for e in etf_by_symbol.values() if e})
 
-        # Per-ticker data and sector-ETF data concurrently (both rate-limited internally).
-        results, etf_results = await asyncio.gather(
-            asyncio.gather(*[_fetch_one(fmp, uw, sym) for sym in symbols]),
-            asyncio.gather(*[fmp.get_ticker_data(e) for e in needed_etfs]),
-        )
-        sector_etf_data = dict(zip(needed_etfs, etf_results))
-
-    # SPY returns for relative-strength math.
-    spy_data = macro_fmp.get("SPY") or {}
-    spy_returns = spy_data.get("returns", {}) if spy_data else {}
+        # Per-ticker data (sector-ETF data already fetched; nothing else to gather here).
+        results = await asyncio.gather(*[_fetch_one(fmp, uw, sym) for sym in symbols])
 
     # Assemble per-ticker records (skip symbols with no usable FMP data).
     records: list[dict] = []

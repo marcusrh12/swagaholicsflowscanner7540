@@ -89,6 +89,9 @@
     .badge.state-approaching { background: rgba(210,153,34,0.15); color: var(--amber); border: 1px solid var(--amber); }
     .badge.state-breaking { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid var(--green); }
     .badge.state-extended { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
+    /* Cross-reference badge: this breakout name ALSO has a core card above. Neutral
+       blue -- it reads as a pointer, not a warning. Overlap should be rare by design. */
+    .badge.also-core { background: rgba(88,166,255,0.10); color: var(--blue); border: 1px solid var(--blue); }
     /* Breakout section: visually separated from the core setups with its own header,
        a plain-language risk subheader, and a purple accent so it never blurs into the
        higher-confidence core section above it. */
@@ -366,6 +369,7 @@
               <span class="badge count">{{ c.confluence_count }} breakout pts</span>
               {% if c.state_pill %}<span class="badge {{ c.state_pill.cls }}">{{ c.state_pill.text }}</span>{% endif %}
               {% if c.zone_pill %}<span class="badge {{ c.zone_pill.cls }}">{{ c.zone_pill.text }}</span>{% endif %}
+              {% if c.also_core %}<span class="badge also-core">ALSO A CORE SETUP &uarr;</span>{% endif %}
               <span class="badge {{ c.confidence }}">{{ c.confidence }}</span>
             </div>
           </div>

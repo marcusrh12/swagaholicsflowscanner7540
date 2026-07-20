@@ -106,7 +106,8 @@ EARNINGS_CHUNK_DAYS = 7
 EARNINGS_ROW_CAP = 4000               # if a chunk returns this many rows, it truncated
 
 TARGET_MIN_TICKERS = 40               # desired post-filter universe size (floor)
-TARGET_MAX_TICKERS = 60               # desired post-filter universe size (cap)
+TARGET_MAX_TICKERS = 66               # desired post-filter universe size (cap)
+                                      # core(30) + rotate(30) + leadership(6)
 
 # --------------------------------------------------------------------------- #
 # Universe composition: a stable core + a rotating tail
@@ -123,6 +124,15 @@ MIN_RELVOL = 1.5                      # tail must trade >= 1.5x its own 20-day a
 
 RELVOL_LOOKBACK_BARS = 20             # baseline = mean volume of the prior 20 sessions
 RELVOL_FETCH_DAYS = 45                # short calendar window -- enough bars, cheap to fetch
+
+# LEADERSHIP tail: names from sectors just STARTING TO TURN UP (improving relative
+# strength / accelerating short-term momentum -- see sector_etf.sector_improving), even
+# if they are not top dollar-volume or high-relvol. Small by design: discovery only,
+# NOT a streak anchor (streaks stay on the core). This is what surfaces a semis name
+# when SMH is accelerating out of a base while the group still looks weak on 20 days.
+LEADERSHIP_SLOTS = 6                  # total names added from improving sectors
+LEADERSHIP_SECTOR_COUNT = 3          # how many strongest-improving sectors to draw from
+LEADERSHIP_PER_SECTOR_MAX = 3        # cap per sector so one hot group can't dominate
 
 # Always pulled as macro context regardless of filters
 MACRO_TICKERS = ["SPY", "QQQ"]

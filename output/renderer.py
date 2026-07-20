@@ -226,10 +226,24 @@ def render(
     for c in cards:
         _enrich_zone(c)
 
+    # Cross-reference: a breakout card whose ticker ALSO has a core card is flagged so
+    # the page can label the overlap ("also a core setup above") rather than reading as
+    # a fresh, independent idea. The breakout rubric is reframed to be nearly mutually
+    # exclusive with core, so this should be rare -- the session overlap count is logged
+    # below as a monitoring hook: if it stays high, the reframe needs further tightening.
+    core_tickers = {c.get("ticker") for c in cards}
     breakout_cards = analysis.get("breakout_cards", []) or []
     for c in breakout_cards:
         _enrich_zone(c)
         c["state_pill"] = _break_state_pill(c)
+        c["also_core"] = c.get("ticker") in core_tickers
+
+    overlap_count = sum(1 for c in breakout_cards if c.get("also_core"))
+    logger.info(
+        "Breakout/core overlap this session: %s of %s breakout card(s) also appear in "
+        "core (%s core card(s) total)",
+        overlap_count, len(breakout_cards), len(cards),
+    )
 
     context = {
         "session_label": session_label,

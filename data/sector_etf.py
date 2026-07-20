@@ -80,6 +80,38 @@ def _etf_trend(above21: Optional[bool], above50: Optional[bool]) -> Optional[str
     return "mixed"
 
 
+def sector_improving(
+    etf_data: Optional[dict], spy_returns: dict
+) -> tuple[bool, float]:
+    """
+    Is this sector STARTING TO TURN UP? Returns (is_improving, accel_score).
+
+    "Turning up" is deliberately EARLIER than "is a leader": short-term momentum
+    positive AND accelerating versus the trailing 20-day pace. It does NOT require the
+    ETF to already be beating SPY (`ret20_vs_spy` positive), so it catches a group while
+    it is still technically weak on a 20-day basis but has just started to move -- the
+    "rotation out of X into Y" case, before Y shows up as a leader.
+
+      * `ret5 > 0`              -- the group is actually up over the last week.
+      * `accel = ret5 - ret20/4 > 0` -- the recent 5-day pace exceeds the trailing
+        20-day average per-5-day pace (ret20/4 ≈ that pace), i.e. it is accelerating,
+        not just drifting.
+
+    `accel` doubles as a ranking score so callers can pick the STRONGEST-improving
+    sectors. Missing ETF data or returns yields (False, 0.0) -- an unverifiable sector
+    never qualifies, matching build_sector_context's defensive posture. `spy_returns`
+    is accepted for signature symmetry with build_sector_context and future SPY-relative
+    tuning; the current definition is intentionally SPY-independent (see above).
+    """
+    rets = (etf_data or {}).get("returns") or {}
+    ret5 = rets.get("ret5")
+    ret20 = rets.get("ret20")
+    if ret5 is None or ret20 is None:
+        return (False, 0.0)
+    accel = ret5 - (ret20 / 4.0)
+    return (ret5 > 0 and accel > 0, round(accel, 3))
+
+
 def build_sector_context(
     etf_symbol: Optional[str],
     etf_data: Optional[dict],
