@@ -650,6 +650,29 @@ class ClaudeEngine:
             max_retries=0,
         )
 
+    @staticmethod
+    def _log_usage(model: str, usage: Any) -> None:
+        """Log tokens and an estimated USD cost for one call, so overruns surface in
+        the scan logs immediately rather than days later on the billing dashboard.
+        The cost is an estimate from config.MODEL_PRICING (list pricing), not billing."""
+        if usage is None:
+            return
+        in_tok = getattr(usage, "input_tokens", 0) or 0
+        out_tok = getattr(usage, "output_tokens", 0) or 0
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        prices = getattr(config, "MODEL_PRICING", {}).get(model)
+        if prices:
+            in_price, out_price = prices
+            cost = (in_tok * in_price + out_tok * out_price) / 1_000_000
+            cost_str = f"~${cost:.3f}"
+        else:
+            cost_str = "cost n/a (no pricing for model)"
+        logger.info(
+            "Claude usage (%s): input=%s output=%s cache_read=%s cache_write=%s -> %s",
+            model, in_tok, out_tok, cache_read, cache_write, cost_str,
+        )
+
     async def _call(
         self, system_prompt: str, user_content: str, model: Optional[str] = None
     ) -> Optional[str]:
@@ -660,12 +683,17 @@ class ClaudeEngine:
             system=system_prompt,
             messages=[{"role": "user", "content": user_content}],
         )
-        # Fable 5 uses adaptive extended thinking; bound it via output_config.effort
-        # so reasoning doesn't consume the whole token budget and starve the JSON
-        # output. Omitted when CLAUDE_EFFORT is blank (e.g. models without the knob).
+        # Opus 4.8 runs WITHOUT thinking unless we ask for it explicitly (unlike
+        # fable-5, where thinking is always on). With thinking off, opus tends to leak
+        # reasoning into the visible response, which corrupts the strict-JSON output
+        # contract this scanner parses. So request adaptive thinking, then bound its
+        # depth via output_config.effort so reasoning doesn't consume the whole token
+        # budget and starve the JSON. Effort omitted when CLAUDE_EFFORT is blank.
+        kwargs["thinking"] = {"type": "adaptive"}
         if getattr(config, "CLAUDE_EFFORT", ""):
             kwargs["output_config"] = {"effort": config.CLAUDE_EFFORT}
         message = await self._client.messages.create(**kwargs)
+        self._log_usage(model, getattr(message, "usage", None))
 
         # A safety refusal returns HTTP 200 with an empty content list, so this has
         # to be checked before reading content — otherwise it looks like a generic

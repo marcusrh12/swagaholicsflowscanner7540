@@ -543,6 +543,36 @@ def _slim_zone(ticker: dict) -> dict:
     return {**ticker, "entry_zone": slim}
 
 
+# Per-ticker caps applied to the MODEL payload only (the rendered HTML cards keep the
+# full lists). The options block already ships FLOW_ALERTS_SHOWN (10) alerts and up to
+# CHAIN_MAX_CANDIDATES (12) contracts per ticker; trimming further here shaves input
+# tokens across ~40-66 tickers without dropping the largest prints or the tradable
+# short-list. The lists are pre-sorted upstream (biggest flow first, best candidates
+# first), so a head slice keeps the most decision-relevant entries. Tunable.
+_MODEL_MAX_CALL_CANDIDATES = 8
+_MODEL_MAX_FLOW_ALERTS = 8
+
+
+def _slim_options_for_model(ticker: dict) -> dict:
+    """Cap the option-chain shortlist and flow-alert list handed to the model."""
+    options = ticker.get("options")
+    if not isinstance(options, dict) or not options:
+        return ticker
+    slim_opts = dict(options)
+    candidates = slim_opts.get("call_candidates")
+    if isinstance(candidates, list) and len(candidates) > _MODEL_MAX_CALL_CANDIDATES:
+        slim_opts["call_candidates"] = candidates[:_MODEL_MAX_CALL_CANDIDATES]
+    alerts = slim_opts.get("flow_alerts")
+    if isinstance(alerts, list) and len(alerts) > _MODEL_MAX_FLOW_ALERTS:
+        slim_opts["flow_alerts"] = alerts[:_MODEL_MAX_FLOW_ALERTS]
+    return {**ticker, "options": slim_opts}
+
+
+def _slim_ticker_for_model(ticker: dict) -> dict:
+    """One pass: strip render-only zone fields and cap the options lists for the model."""
+    return _slim_options_for_model(_slim_zone(ticker))
+
+
 def build_messages(payload: dict) -> tuple[str, str]:
     """Return (system_prompt, user_message_json_string)."""
     # Session-aware emphasis: same rubrics, but the confirmation scan (say) adds a
@@ -557,7 +587,7 @@ def build_messages(payload: dict) -> tuple[str, str]:
     payload_for_model = {k: v for k, v in payload.items() if k != "repeat_history"}
     if payload_for_model.get("tickers"):
         payload_for_model["tickers"] = [
-            _slim_zone(t) for t in payload_for_model["tickers"]
+            _slim_ticker_for_model(t) for t in payload_for_model["tickers"]
         ]
 
     user_content = (

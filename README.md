@@ -5,7 +5,7 @@ confirmation 10:15, pulse 14:00 ET) to identify high-probability swing **call**
 setups using multi-confluence analysis.
 
 It screens a large-cap US-equity universe, pulls price/technical/options/flow data,
-sends a single structured payload to **Claude (`claude-sonnet-4-6`)** for confluence
+sends a single structured payload to **Claude (`claude-opus-4-8`)** for confluence
 scoring, and renders clean, auto-refreshing HTML trade cards.
 
 > ⚠️ **For research and educational use only. Not investment advice.** Options

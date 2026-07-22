@@ -56,9 +56,16 @@ ENABLE_GITHUB_PAGES = True
 # --------------------------------------------------------------------------- #
 # Claude model
 # --------------------------------------------------------------------------- #
-CLAUDE_MODEL = "claude-fable-5"
-CLAUDE_FALLBACK_MODEL = "claude-opus-4-8"  # retried once on a fable-5 safety refusal
-CLAUDE_EFFORT = "medium"             # fable-5 adaptive-thinking effort ("low"/"medium"/"high"); "" to omit
+CLAUDE_MODEL = "claude-opus-4-8"
+# Retried once on a safety refusal. With opus-4-8 now the primary, this is the same
+# model, so the refusal path is effectively a no-op retry -- opus rarely trips the
+# safety classifier that fable-5 did. Kept for the rare refusal + as the fallback if
+# CLAUDE_MODEL is ever pointed back at a more refusal-prone model.
+CLAUDE_FALLBACK_MODEL = "claude-opus-4-8"
+CLAUDE_EFFORT = "low"                # adaptive-thinking effort ("low"/"medium"/"high"); "" to omit.
+# "low" keeps opus-4-8 performing well on this structured/analytical task while
+# sharply cutting thinking-token output -- the dominant cost driver. Raise toward
+# "medium" only if card quality visibly regresses.
 # max_tokens covers thinking AND the JSON output. Medium effort spends ~8-9k on
 # thinking alone; the seven-category rubric then needs ~4-6k for the cards. 12000
 # truncated the JSON mid-card (stop_reason=max_tokens), which surfaces as an
@@ -80,6 +87,14 @@ CLAUDE_MAX_TOKENS = 32000
 # recur, the next lever is lowering CLAUDE_EFFORT (less thinking, faster output).
 CLAUDE_TIMEOUT_SECONDS = 600
 CLAUDE_RETRY_DELAY_SECONDS = 10  # retry once after this delay on failure
+
+# USD per 1M tokens, (input, output), for the per-run cost estimate logged after each
+# call. Approximate list pricing -- used only for the log line, not for billing. Keep
+# in sync with the models this scanner may run (primary + fallback).
+MODEL_PRICING = {
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-fable-5": (10.0, 50.0),
+}
 
 # --------------------------------------------------------------------------- #
 # Universe / filtering parameters (easy to edit)
