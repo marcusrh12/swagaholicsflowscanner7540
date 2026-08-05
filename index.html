@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="refresh" content="300" />
-  <title>FlowScanner &mdash; Confirmation session</title>
+  <title>FlowScanner &mdash; Pulse session</title>
   <style>
     :root {
       --bg: #0f1419;
@@ -172,7 +172,7 @@
     <header class="top">
       <div>
         <h1><span>Flow</span>Scanner</h1>
-        <div class="session-time">Confirmation session &middot; generated 2026-08-05 14:04:00 UTC</div>
+        <div class="session-time">Pulse session &middot; generated 2026-08-05 18:06:28 UTC</div>
       </div>
       <div class="session-time">Auto-refresh every 5 min</div>
     </header>
@@ -180,40 +180,149 @@
     <div class="macro-bar">
       <div class="macro-chip">
         <div class="k">SPY</div>
-        <div class="v bullish">Bullish @ 776.10</div>
+        <div class="v bullish">Bullish @ 771.68</div>
       </div>
       <div class="macro-chip">
         <div class="k">QQQ</div>
-        <div class="v bullish">Bullish @ 727.33</div>
+        <div class="v bullish">Bullish @ 720.99</div>
       </div>
       <div class="macro-chip">
         <div class="k">VIX</div>
-        <div class="v bullish">17.45 (normal)</div>
+        <div class="v bullish">15.89 (normal)</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tape</div>
-        <div class="v neutral">Mixed &middot; 54% green</div>
+        <div class="v bearish">Soft &middot; 43% green</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tickers Scanned</div>
-        <div class="v">37</div>
+        <div class="v">58</div>
       </div>
       <div class="macro-chip">
         <div class="k">Qualifying Setups</div>
-        <div class="v">0</div>
+        <div class="v">1</div>
       </div>
     </div>
 
     
 
     
-    <div class="summary">Broad tape is mixed: 54% of the universe green with SPY and QQQ hugging the flat line intraday (SPY +0.03% from the open), so participation is middling, not a green-light for aggressive longs. VIX 17.45 but up 5.8% today signals a modest bid for hedges, keeping premium from getting cheap; 83% of names remain above their 200-day so the larger uptrend is intact. The problem for buyers is positioning: after a strong 5-day run most large-caps are extended well above support with resistance directly overhead, so risk/reward on fresh call entries is poor and institutional call flow is net SELLING in the mega-cap semis (NVDA, AMD, MU all negative net_call_premium).</div>
+    <div class="summary">Soft tape: only 43% of the universe is green with SPY and QQQ both red from the open (-0.5%/-0.7%) and median names closing near the lower third of their range -- a narrow, defensive session that raises the bar for new longs. VIX 15.9 and falling (-3.7%) means complacency and cheap premium, supportive for owning calls, but many mega-caps printed sharp intraday reversals (GOOGL/GOOG -5%, AMZN -3.6%, META -2.8%), so chasing extended names is dangerous. Best relative strength sits in names holding green against the weak tape; most setups are extended above support, so patience over chasing.</div>
     
 
     
-    <div class="empty">
-      No qualifying swing-call setups this session.<br />
-      A quiet tape is a valid result &mdash; the scanner only surfaces High/Medium confidence confluences.
+    <div class="cards">
+      
+      <div class="card">
+        <div class="card-head">
+          <div class="ticker">AMGN<small>CALLS</small></div>
+          <div class="badges">
+            <span class="badge count">6 confluences</span><span class="badge zone-ext">EXTENDED 6.6%</span>
+            <span class="badge Medium">Medium</span>
+          </div>
+        </div>
+
+        
+
+        <div class="thesis">AMGN is one of the few names actually rising on a soft tape, carving higher highs with a full EMA stack and freshly clearing the 398 weekly consolidation high on cheap IV. The setup is real but price is ~6.5% above its 373-379 support zone, so this only becomes worth paying for on a pullback toward the broken 398 shelf; do not chase here. A daily hold above 398 confirms the breakout and opens the measured move toward 429; a close back under 397 says the breakout failed and the trade is wrong.</div>
+
+        <div class="contract">
+          <span class="k">Contract</span><br />
+          Exp <strong>2026-08-21</strong> (16d)
+          &middot; Strike <strong>405.0</strong>
+          &middot; Delta <strong>0.54</strong>
+          <br />
+          Ask <strong>11.60</strong>
+          &middot; Breakeven <strong>416.60</strong>
+          &middot; OI <strong>1,073</strong>
+        </div>
+
+        <div class="grid2">
+          <div class="metric">
+            <div class="k">Entry Zone</div>
+            <div class="v zone">373.62–379.39
+                <span class="sub">6.6% below · 2.3 ATR · moderate</span></div>
+          </div>
+          <div class="metric">
+            <div class="k">Option R/R</div>
+            <div class="v rr">1.80
+              <span style="font-size:11px;color:var(--muted)">&rarr; 11.96 at zone*</span> <span class="sub">stock 2.5 &middot; entry 406.10</span></div>
+          </div>
+          <div class="metric">
+            <div class="k">Target</div>
+            <div class="v target">429.00</div>
+          </div>
+          <div class="metric">
+            <div class="k">Stop</div>
+            <div class="v stop">397.00</div>
+          </div>
+        </div>
+
+        
+        <div class="zone-levels">
+          Zone: EMA21 376.99 &middot; Prior day low 376.02 &middot; <span class="held">held 1&times;</span>
+        </div>
+        
+
+        <ul class="signals">
+          
+          <li>Trend alignment: price above the 8/21/50/200-day EMAs in a full bullish stack -- every timeframe of buyer is in profit and defending</li>
+          
+          <li>Momentum: daily RSI 71.9 with MACD above signal and rising -- momentum firmly with buyers (hot, but confirming trend not yet cracking)</li>
+          
+          <li>Volatility setup: absolute IV 0.31 is low despite a 66 IV-rank, so premium is cheap while ATR leaves room to a ~429 target</li>
+          
+          <li>Smart money flow: net call premium +$1.0M with bullish alerts 13 vs 4, repeated 380-strike call buying -- institutions leaning long</li>
+          
+          <li>Macro alignment: AMGN up +3.2% from the open on a soft, red tape -- genuine relative strength, the single most useful read today</li>
+          
+          <li>Market structure: daily uptrend with higher highs and higher lows, price broke above the weekly consolidation top (398) -- constructive</li>
+          
+        </ul>
+
+        
+        <div class="cautions-box">
+          <div class="cautions-label">Weigh these risks</div>
+          <ul class="cautions">
+            
+            <li>Sector weakness: XLV is lagging SPY over 20 days and AMGN is flagged diverging from its group -- the name is fighting a soft healthcare tape</li>
+            
+            <li>Extended positioning: price sits ~6.5% above its support/entry zone, so buying at spot is chasing; the good entry is a pullback to the 398 shelf</li>
+            
+            <li>Breadth divergence: only 43% of the universe is green on a soft tape, so a single long carries more tape risk</li>
+            
+            <li>Flow is thin (18 alerts) and skewed to long-dated 380 calls -- the institutional read is lighter than the net premium suggests</li>
+            
+          </ul>
+        </div>
+        
+
+        
+        <div class="iv">
+          Contract modelled at 757 at risk per contract
+          &middot; worth ~25.22 at target,
+          ~4.03 at stop
+          <span style="color:var(--muted)">(Black-Scholes, IV held constant; real IV usually falls after a breakout)</span>
+        </div>
+        
+
+        
+        <div class="iv">
+          At zone ~376.50: premium
+          ~2.01
+          (vs 11.60 now) &middot; delta ~0.14
+          &middot; stop 364.95
+          <br /><span style="color:var(--amber)">*this strike is far OTM down there (delta
+          0.14) -- the at-zone ratio is flattered by a
+          near-worthless premium. At that price you would want a nearer strike.</span>
+        </div>
+        
+
+        
+        <div class="iv">IV: Cheap for entry -- absolute IV ~0.31 is low, so calls are not overpaying for the move even with a mid-range IV rank.</div>
+        
+      </div>
+      
     </div>
     
 
