@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="refresh" content="300" />
-  <title>FlowScanner &mdash; Pulse session</title>
+  <title>FlowScanner &mdash; Premarket session</title>
   <style>
     :root {
       --bg: #0f1419;
@@ -172,7 +172,7 @@
     <header class="top">
       <div>
         <h1><span>Flow</span>Scanner</h1>
-        <div class="session-time">Pulse session &middot; generated 2026-09-04 18:28:27 UTC</div>
+        <div class="session-time">Premarket session &middot; generated 2026-09-08 13:05:38 UTC</div>
       </div>
       <div class="session-time">Auto-refresh every 5 min</div>
     </header>
@@ -180,23 +180,23 @@
     <div class="macro-bar">
       <div class="macro-chip">
         <div class="k">SPY</div>
-        <div class="v bullish">Bullish @ 769.81</div>
+        <div class="v bullish">Bullish @ 770.19</div>
       </div>
       <div class="macro-chip">
         <div class="k">QQQ</div>
-        <div class="v bullish">Bullish @ 717.45</div>
+        <div class="v bullish">Bullish @ 718.96</div>
       </div>
       <div class="macro-chip">
         <div class="k">VIX</div>
-        <div class="v bullish">14.11 (low (risk-on))</div>
+        <div class="v bullish">15.50 (normal)</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tape</div>
-        <div class="v bearish">Soft &middot; 58% green</div>
+        <div class="v neutral">Mixed &middot; 54% green</div>
       </div>
       <div class="macro-chip">
         <div class="k">Tickers Scanned</div>
-        <div class="v">45</div>
+        <div class="v">63</div>
       </div>
       <div class="macro-chip">
         <div class="k">Qualifying Setups</div>
@@ -207,7 +207,7 @@
     
 
     
-    <div class="summary">Low VIX (14.1, falling) keeps premium cheap, but the intraday tape is soft: SPY -0.28% from the open with breadth only middling (57.8% green, median range position 62%). More importantly, every ticker in this payload has an empty options chain (no call_candidates and flow_available false), so no contract can be selected and no card can be responsibly issued.</div>
+    <div class="summary">Mixed intraday tape: VIX 15.5 (normal, +1.3% -- mild, premium still cheap), SPY above its 50/200-day and bullish, breadth middling at 54% green and 63% above the 200-day -- broad enough but not decisive, favoring selectivity over aggression. Critically, every ticker in this payload has an EMPTY call_candidates list and flow_available is false, so no tradeable contract can be selected and no card can be responsibly emitted.</div>
     
 
     
